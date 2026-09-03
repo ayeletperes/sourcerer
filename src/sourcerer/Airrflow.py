@@ -244,7 +244,16 @@ def buildSamplesheet(entries, out, collection, root=None, loci=None):
         # sample_id is left for the merge to assign, since it depends on what the
         # samplesheet already contains. The real identifier is preserved in
         # sample_name, which is what the merge keys on.
-        subject = clean(metadata.get('Subject')) or clean(metadata.get('study'))
+        #
+        # Subject is passed through raw rather than via clean(): a value like OAS's
+        # own "no" carries real information (subject identity was not recorded) and
+        # must not be collapsed and then replaced by the study name, which would
+        # falsely tell airrflow that every otherwise-unidentified unit in the study
+        # is the same subject. The study is used only when OAS supplies no value
+        # for Subject at all.
+        raw_subject = metadata.get('Subject')
+        subject = (str(raw_subject).strip() if raw_subject not in (None, '') else '')
+        subject = subject or clean(metadata.get('study'))
 
         rows.append({
             'sample_id': '',

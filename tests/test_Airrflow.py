@@ -172,6 +172,33 @@ class TestSamplesheetMerge(unittest.TestCase):
         self.assertEqual(rows[1]['sample_id'], 'ssr_2')
         self.assertEqual(rows[1]['subject_id'], 'ssr_2_subj')
 
+    def test_subject_no_is_preserved_rather_than_falling_back_to_study(self):
+        """
+        OAS's own "no" for Subject is kept as is, not replaced by the study name.
+
+        Substituting the study would falsely tell airrflow that every
+        otherwise-unidentified unit in that study is the same subject, pooling
+        unrelated individuals into one clonal group.
+        """
+        self.write([makeUnit('Corinaldesi_2024/csv_paired/a.csv.gz',
+                             study='Corinaldesi_2024', Subject='no')])
+
+        rows = readRows(self.sheet)
+        self.assertEqual(rows[0]['subject_id'], 'no')
+
+    def test_subject_absent_still_falls_back_to_study(self):
+        """
+        With no Subject value at all, the study name is still the best guess.
+
+        Unlike an explicit null token such as "no", an absent value carries no
+        information of its own to preserve.
+        """
+        self.write([makeUnit('Corinaldesi_2024/csv_paired/a.csv.gz',
+                             study='Corinaldesi_2024')])
+
+        rows = readRows(self.sheet)
+        self.assertEqual(rows[0]['subject_id'], 'Corinaldesi_2024')
+
 
 if __name__ == '__main__':
     unittest.main()

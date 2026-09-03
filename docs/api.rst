@@ -13,6 +13,7 @@ API
    modules/Catalog
    modules/Convert
    modules/Airrflow
+   modules/Ncbi
    modules/Reference
    modules/Provenance
    modules/Gzip

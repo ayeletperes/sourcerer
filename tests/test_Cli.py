@@ -6,6 +6,7 @@ Unit tests for the commandline interface
 __author__ = 'Susanna Marquez'
 
 # Imports
+import csv
 import io
 import shutil
 import tempfile
@@ -17,9 +18,16 @@ from unittest import mock
 import pandas
 
 # Sourcerer imports
-from sourcerer.Cli import getArgParser, handleDownload
+from sourcerer.Cli import (
+    NCBI_EVIDENCE_COLUMNS,
+    getArgParser,
+    handleDownload,
+    handleOasVerify,
+)
+from sourcerer.Http import HttpClient
 from sourcerer.Sources.Base import DataUnit, DownloadResult, Query, SourceBase
 from sourcerer.Sources.Oas import OasSource, newReport
+from tests.FakeHttp import FakeResponse, FakeSession
 
 
 class TestArgParser(unittest.TestCase):
@@ -247,6 +255,179 @@ class TestHandleDownload(unittest.TestCase):
 
         self.assertTrue((self.outdir / 'samplesheet_airrflow_airr.tsv').exists())
         self.assertTrue((self.outdir / 'samplesheet_airrflow_fasta.tsv').exists())
+
+
+#: A samplesheet header narrow enough for verify's own tests: it only reads
+#: sample_id, sample_name and subject_id, so the rest is set dressing.
+VERIFY_COLUMNS = ('sample_id', 'filename', 'subject_id', 'species', 'sample_name')
+
+#: One esearch/esummary/efetch round trip resolving SRR1 to BL-110_VDJ, the
+#: same fixture shape test_Ncbi.py exercises in isolation; this only checks
+#: that handleOasVerify wires it into the evidence TSV and --apply correctly.
+NCBI_ROUTES = {
+    'esearch': FakeResponse(200, b'<eSearchResult><IdList><Id>1</Id>'
+                                 b'</IdList></eSearchResult>'),
+    'esummary': FakeResponse(200,
+        b'<eSummaryResult><DocSum><Id>1</Id>'
+        b'<Item Name="ExpXml" Type="String">'
+        b'&lt;Summary&gt;&lt;Title&gt;GSM1: BL-110_VDJ&lt;/Title&gt;&lt;/Summary&gt;'
+        b'&lt;Biosample&gt;SAMN1&lt;/Biosample&gt;</Item>'
+        b'<Item Name="Runs" Type="String">'
+        b'&lt;Run acc="SRR1" total_spots="1"/&gt;</Item>'
+        b'</DocSum></eSummaryResult>'),
+    'efetch': FakeResponse(200,
+        b'<BioSampleSet><BioSample accession="SAMN1">'
+        b'<Ids><Id db="BioSample">SAMN1</Id></Ids>'
+        b'<Description><Title>BL-110_VDJ</Title></Description>'
+        b'</BioSample></BioSampleSet>'),
+}
+
+
+class TestHandleOasVerify(unittest.TestCase):
+    """
+    Tests for the verify command's evidence report
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.samplesheet = self.tmp / 'samplesheet_airrflow_airr.tsv'
+
+    def writeSamplesheet(self, rows):
+        """Write a samplesheet with just the columns verify needs."""
+        with open(self.samplesheet, 'w', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(VERIFY_COLUMNS),
+                                    delimiter='\t', lineterminator='\n')
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def runVerify(self, extra_argv=()):
+        """Parse a real commandline and run the verify handler against a fake NCBI."""
+        argv = ['oas', 'verify', str(self.samplesheet)] + list(extra_argv)
+        args = getArgParser().parse_args(argv)
+
+        fake_client = HttpClient(delay=0, backoff=0,
+                                 session=FakeSession(lambda method, url, headers, i: next(
+                                     response for substring, response in NCBI_ROUTES.items()
+                                     if substring in url)))
+        with mock.patch('sourcerer.Cli.HttpClient', return_value=fake_client):
+            return handleOasVerify(args)
+
+    def readReport(self, path=None):
+        """Read back the evidence report as a list of dicts."""
+        path = path or self.samplesheet.with_name(
+            self.samplesheet.stem + '.ncbi_evidence' + self.samplesheet.suffix)
+        with open(path, newline='') as handle:
+            return list(csv.DictReader(handle, delimiter='\t'))
+
+    def test_a_real_subject_id_is_never_looked_up(self):
+        """
+        A row that already has a subject does not touch the network at all.
+
+        HttpClient is patched to a client whose session raises on any call,
+        so a lookup attempt would fail loudly rather than silently succeed --
+        the row still appearing correctly in the report is the assertion.
+        """
+        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
+                               'subject_id': 'Donor-2', 'species': 'human',
+                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
+
+        empty_client = HttpClient(delay=0, backoff=0, session=FakeSession(
+            lambda *a: (_ for _ in ()).throw(AssertionError('no network call was expected'))))
+        args = getArgParser().parse_args(['oas', 'verify', str(self.samplesheet)])
+        with mock.patch('sourcerer.Cli.HttpClient', return_value=empty_client):
+            self.assertEqual(handleOasVerify(args), 0)
+
+        rows = self.readReport()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'passthrough')
+        self.assertEqual(rows[0]['biosample_id'], 'Donor-2')
+        self.assertEqual(rows[0]['biosample_id_suggested'], 'Donor-2')
+
+    def test_resolved_row_gets_both_a_raw_and_a_suggested_biosample_id(self):
+        """
+        A resolved row's report names its BioSample, a check link, and both
+        forms of biosample_id -- no flag needed to choose between them.
+        """
+        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
+                               'subject_id': 'no', 'species': 'human',
+                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
+
+        self.assertEqual(self.runVerify(), 0)
+
+        rows = self.readReport()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'ok')
+        self.assertEqual(rows[0]['biosample_accession'], 'SAMN1')
+        self.assertEqual(rows[0]['biosample_id'], 'BL-110_VDJ')
+        self.assertEqual(rows[0]['biosample_id_suggested'], 'BL-110')
+        self.assertIn('SAMN1', rows[0]['biosample_url'])
+
+    def test_report_carries_every_input_column(self):
+        """
+        The report is a superset of the input, not a separate NCBI-only
+        file: airrflow-required columns absent from NCBI_EVIDENCE_COLUMNS
+        (filename, species, ...) must survive untouched, in their original
+        position, so the report can be used as airrflow --input directly.
+        """
+        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'fasta/x.fasta',
+                               'subject_id': 'no', 'species': 'human',
+                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
+
+        self.assertEqual(self.runVerify(), 0)
+
+        with open(self.samplesheet.with_name(
+                self.samplesheet.stem + '.ncbi_evidence' + self.samplesheet.suffix),
+                newline='') as handle:
+            reader = csv.DictReader(handle, delimiter='\t')
+            fields = reader.fieldnames
+            row = next(reader)
+
+        self.assertEqual(fields, list(VERIFY_COLUMNS) + list(NCBI_EVIDENCE_COLUMNS))
+        self.assertEqual(row['filename'], 'fasta/x.fasta')
+        self.assertEqual(row['species'], 'human')
+
+    def test_default_report_path_moves_the_extension_rather_than_appending_it(self):
+        """
+        The default path is <stem>.ncbi_evidence<ext>, not
+        <stem><ext>.ncbi_evidence.tsv -- one extension, not two.
+        """
+        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
+                               'subject_id': 'Donor-2', 'species': 'human',
+                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
+
+        self.assertEqual(self.runVerify(), 0)
+
+        self.assertTrue((self.tmp / 'samplesheet_airrflow_airr.ncbi_evidence.tsv').exists())
+        self.assertFalse(Path(str(self.samplesheet) + '.ncbi_evidence.tsv').exists())
+
+    def test_out_overrides_the_default_report_path(self):
+        """--out sends the report somewhere other than the default sidecar path."""
+        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
+                               'subject_id': 'no', 'species': 'human',
+                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
+        out = self.tmp / 'report.tsv'
+
+        self.assertEqual(self.runVerify(['--out', str(out)]), 0)
+
+        self.assertTrue(out.exists())
+        self.assertFalse(self.samplesheet.with_name(
+            self.samplesheet.stem + '.ncbi_evidence' + self.samplesheet.suffix).exists())
+        self.assertEqual(self.readReport(out)[0]['biosample_id'], 'BL-110_VDJ')
+
+    def test_missing_required_column_is_reported_by_name(self):
+        """A samplesheet missing a column verify needs names it in the error."""
+        with open(self.samplesheet, 'w', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=['sample_id', 'filename'],
+                                    delimiter='\t', lineterminator='\n')
+            writer.writeheader()
+            writer.writerow({'sample_id': 'ssr_1', 'filename': 'x.tsv'})
+        args = getArgParser().parse_args(['oas', 'verify', str(self.samplesheet)])
+
+        with self.assertRaises(Exception) as raised:
+            handleOasVerify(args)
+        self.assertIn('subject_id', str(raised.exception))
+        self.assertIn('sample_name', str(raised.exception))
 
 
 if __name__ == '__main__':

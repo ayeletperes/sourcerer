@@ -16,6 +16,7 @@ from sourcerer.Ncbi import (
     gatherEvidence,
     poolCodes,
     resolveAccessions,
+    resolveGsmTitles,
     suggestSubject,
 )
 from tests.FakeHttp import FakeResponse, FakeSession
@@ -53,6 +54,14 @@ def biosampleXml(accession, sample_name=None, title=''):
     return ('<BioSample accession="%s"><Ids>%s</Ids>'
            '<Description><Title>%s</Title></Description></BioSample>'
            % (accession, id_xml, title))
+
+
+def gdsDocsumXml(uid, accession, title):
+    """One esummary DocSum from the 'gds' database, as GEO itself returns it."""
+    return ('<DocSum><Id>%s</Id>'
+           '<Item Name="Accession" Type="String">%s</Item>'
+           '<Item Name="title" Type="String">%s</Item></DocSum>'
+           % (uid, accession, title))
 
 
 def efetchXml(*biosamples):
@@ -130,6 +139,27 @@ class TestPoolCodes(unittest.TestCase):
     def test_a_single_parenthesized_code_is_not_pooled(self):
         """One code in parentheses names a single donor, not a pool."""
         self.assertEqual(poolCodes('Hashed scBCR sample (FA007)'), ())
+
+    def test_reads_off_a_donor_list_with_no_pooled_keyword_or_parentheses(self):
+        """
+        A plain-prose donor list, no 'hashed'/'pooled' keyword and no
+        parenthesized code list at all, still reads as pooled.
+
+        Ferreira_2024's own phrasing: several donors sequenced together,
+        described the way a person would write it rather than the way
+        POOLED_RE's own vocabulary expects.
+        """
+        text = 'BCR-Seq, BNT/BNT d7, donor 31, 32 and 33'
+        self.assertEqual(poolCodes(text), ('31', '32', '33'))
+
+    def test_donor_list_with_more_than_two_names_and_a_serial_comma(self):
+        """'A, B, C and D' splits into all four codes, not just the last two."""
+        text = 'BCR-Seq, BNT/BNT d7, donor 21, 22, 23 and 24'
+        self.assertEqual(poolCodes(text), ('21', '22', '23', '24'))
+
+    def test_a_single_donor_named_this_way_is_not_pooled(self):
+        """'donor 31' alone names one subject, not a pool."""
+        self.assertEqual(poolCodes('BCR-Seq from a single donor 31'), ())
 
 
 class TestSuggestSubject(unittest.TestCase):
@@ -247,6 +277,54 @@ class TestFetchBiosamples(unittest.TestCase):
         self.assertEqual(names['SAMN36877371'], 'BL-110_VDJ')
 
 
+class TestResolveGsmTitles(unittest.TestCase):
+    """
+    Tests for GEO's own GSM title lookup (the 'gds' database)
+    """
+
+    def test_finds_a_gsm_title(self):
+        """GEO indexes a GSM by its own accession, unlike an SRA text search."""
+        client = makeClient({
+            'esearch.fcgi?db=gds': FakeResponse(200, esearchXml('306504709')),
+            'esummary.fcgi?db=gds': FakeResponse(200, esummaryXml(gdsDocsumXml(
+                '306504709', 'GSM6504709',
+                'scBCR, adult male, subject P05, Lymph Node, year 1 day-0, '
+                'replicate 1'))),
+        })
+
+        titles = resolveGsmTitles(client, ['GSM6504709'])
+
+        self.assertEqual(titles['GSM6504709'],
+                         'scBCR, adult male, subject P05, Lymph Node, year 1 '
+                         'day-0, replicate 1')
+
+    def test_ignores_the_parent_series_and_platform_docsums(self):
+        """
+        A '[Accession]' search on one GSM also surfaces its parent GSE
+        series and GPL platform records; only the docsum whose own
+        Accession is the GSM actually queried is kept.
+        """
+        client = makeClient({
+            'esearch.fcgi?db=gds': FakeResponse(
+                200, esearchXml('200211869', '306504709')),
+            'esummary.fcgi?db=gds': FakeResponse(200, esummaryXml(
+                gdsDocsumXml('200211869', 'GSE211869', 'a whole series title'),
+                gdsDocsumXml('306504709', 'GSM6504709', 'the sample title'))),
+        })
+
+        titles = resolveGsmTitles(client, ['GSM6504709'])
+
+        self.assertEqual(titles, {'GSM6504709': 'the sample title'})
+
+    def test_accession_with_no_gds_hit_is_absent_from_the_result(self):
+        """A GSM GEO itself has no record of is simply not in the result."""
+        client = makeClient({'esearch.fcgi?db=gds': FakeResponse(200, esearchXml())})
+
+        titles = resolveGsmTitles(client, ['GSM00000000'])
+
+        self.assertEqual(titles, {})
+
+
 class TestGatherEvidence(unittest.TestCase):
     """
     Tests for the combined accession -> Evidence pipeline
@@ -325,6 +403,80 @@ class TestGatherEvidence(unittest.TestCase):
         self.assertEqual(evidence.status, 'ok')
         self.assertEqual(evidence.sample_name,
                          'IG-Seq of CSF unsorted cells from sample 32, 5prime replicate')
+
+    def test_gsm_with_no_sra_record_resolves_through_geo_alone(self):
+        """
+        A GSM whose SRA experiment is shared with sibling GSMs and names
+        none of them by accession (a common 10x cellranger submission
+        pattern) still resolves, through GEO's own record, and links the
+        GEO page since there is no BioSample to point at instead.
+        """
+        client = makeClient({
+            'esearch.fcgi?db=sra': FakeResponse(200, esearchXml()),
+            'esearch.fcgi?db=gds': FakeResponse(200, esearchXml('306504709')),
+            'esummary.fcgi?db=gds': FakeResponse(200, esummaryXml(gdsDocsumXml(
+                '306504709', 'GSM6504709',
+                'scBCR, adult male, subject P05, Lymph Node, year 1 day-0, '
+                'replicate 1'))),
+        })
+
+        evidence = gatherEvidence(client, ['GSM6504709'])['GSM6504709']
+
+        self.assertEqual(evidence.status, 'ok')
+        self.assertEqual(evidence.biosample_accession, '')
+        self.assertIn('subject P05', evidence.sample_name)
+        self.assertEqual(evidence.url,
+                         'https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSM6504709')
+
+    def test_gsm_resolved_through_both_prefers_geos_title_but_keeps_the_biosample_link(self):
+        """
+        A GSM found through both routes reports GEO's own title as
+        sample_name -- more reliably subject-bearing in practice than the
+        text its linked BioSample record carries, see resolveGsmTitles --
+        but still links that real BioSample rather than the GEO page.
+        """
+        client = makeClient({
+            'esearch.fcgi?db=sra': FakeResponse(200, esearchXml('1')),
+            'esummary.fcgi?db=sra': FakeResponse(200, esummaryXml(docsumXml(
+                '1', 'GSM6504685: adult male, lymph node, year 1 day-0, '
+                    'replicate 1', 'SAMN30469126', 'SRR21055217'))),
+            'efetch': FakeResponse(200, efetchXml(biosampleXml(
+                'SAMN30469126',
+                title='adult male, lymph node, year 1 day-0, replicate 1'))),
+            'esearch.fcgi?db=gds': FakeResponse(200, esearchXml('306504685')),
+            'esummary.fcgi?db=gds': FakeResponse(200, esummaryXml(gdsDocsumXml(
+                '306504685', 'GSM6504685',
+                'scBCR, adult male, subject P04, lymph node, year 1 day-0, '
+                'replicate 1'))),
+        })
+
+        evidence = gatherEvidence(client, ['GSM6504685'])['GSM6504685']
+
+        self.assertEqual(evidence.biosample_accession, 'SAMN30469126')
+        self.assertIn('subject P04', evidence.sample_name)
+        self.assertEqual(evidence.url,
+                         'https://www.ncbi.nlm.nih.gov/biosample/SAMN30469126')
+
+    def test_a_donor_list_with_no_pooled_keyword_is_still_flagged_pooled(self):
+        """
+        Ferreira_2024's own multi-donor phrasing ('donor 31, 32 and 33', no
+        'hashed'/'pooled' keyword, no parenthesized list) still ends up
+        'pooled' end to end, not silently resolved to a wrong single donor.
+        """
+        client = makeClient({
+            'esearch.fcgi?db=sra': FakeResponse(200, esearchXml('1')),
+            'esummary.fcgi?db=sra': FakeResponse(200, esummaryXml(docsumXml(
+                '1', 'BCR-Seq, BNT/BNT d7, donor 31, 32 and 33',
+                'SAMN00000001', 'SRR27484536'))),
+            'efetch': FakeResponse(200, efetchXml(biosampleXml(
+                'SAMN00000001', title='BCR-Seq, BNT/BNT d7, donor 31, 32 and 33'))),
+        })
+
+        evidence = gatherEvidence(client, ['SRR27484536'])['SRR27484536']
+
+        self.assertEqual(evidence.status, 'pooled')
+        self.assertEqual(evidence.pooled_codes, ('31', '32', '33'))
+        self.assertEqual(evidence.suggested_subject, '')
 
 
 if __name__ == '__main__':

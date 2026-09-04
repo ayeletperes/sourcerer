@@ -5,16 +5,19 @@ Some OAS studies do not record a Subject in their own metadata (`sourcerer oas
 download` passes that through raw, as the OAS null sentinel 'no', rather than
 guessing — see Airrflow.buildSamplesheet). Every such run still has an SRA run
 accession or GEO sample accession embedded in its OAS unit id, and that
-accession's BioSample record on NCBI usually names the sample plainly, e.g.
-BioSample SAMN36877371 for run SRR25557617 gives the sample name 'BL-110_VDJ'.
+accession usually names the sample plainly somewhere on NCBI, e.g. BioSample
+SAMN36877371 for run SRR25557617 gives the sample name 'BL-110_VDJ'.
 
 This module is the deterministic half of closing that gap: given a batch of
-accessions, look up each one's BioSample and return its raw sample name plus a
-link a person can open to check the record themselves. It does not decide what
-part of that raw text is the subject's identity — 'BL-110_VDJ' strips to
-BL-110 in one study while 'TT04_subj6_V3' strips to TT04_subj6 in another, and
-telling those apart needs to know the specific study's naming convention, not
-just read the string. suggestSubject applies the handful of patterns generic
+accessions, resolve each one's sample name plus a link a person can open to
+check the record themselves. An SRR/ERR/DRR run resolves through its
+BioSample; a GSM resolves through GEO's own record too, and preferably so --
+see resolveGsmTitles for why a GSM's SRA/BioSample text is not trustworthy
+enough to rely on alone. Either way, this does not decide what part of that
+raw text is the subject's identity — 'BL-110_VDJ' strips to BL-110 in one
+study while 'TT04_subj6_V3' strips to TT04_subj6 in another, and telling
+those apart needs to know the specific study's naming convention, not just
+read the string. suggestSubject applies the handful of patterns generic
 enough to be safe across studies; everything else is left for
 `sourcerer oas verify`'s evidence report to surface for a human to decide.
 """
@@ -38,6 +41,11 @@ EUTILS_BASE = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
 #: Where a person can check a BioSample record by hand, the same page
 #: `sourcerer oas verify`'s evidence links point at.
 BIOSAMPLE_URL = 'https://www.ncbi.nlm.nih.gov/biosample/%s'
+
+#: Where a person can check a GSM's own GEO record by hand -- used as the
+#: evidence link when a GSM has no discoverable SRA/BioSample record (see
+#: resolveGsmTitles) and so no BIOSAMPLE_URL to offer instead.
+GEO_URL = 'https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=%s'
 
 #: Run/sample accession formats OAS unit ids embed: SRA runs (SRR/ERR/DRR) and
 #: GEO samples (GSM), the latter for studies submitted through GEO rather than
@@ -70,6 +78,17 @@ CHUNK_SIZE = 40
 POOLED_RE = re.compile(r'\b(hash(?:ed)?|pool(?:ed)?|multiplex(?:ed)?)\b',
                        re.IGNORECASE)
 
+#: A second, unrelated way a sample description names more than one donor:
+#: plain prose with no 'hashed'/'pooled'/'multiplexed' keyword and no
+#: parenthesized code list at all, e.g. Ferreira_2024's 'BCR-Seq, BNT/BNT d7,
+#: donor 31, 32 and 33' -- several donors sequenced together, described the
+#: way a person would write it rather than the way POOLED_RE expects. Matched
+#: and counted separately from POOLED_RE/its parenthesized list because
+#: neither the keyword nor the punctuation this pattern needs is present.
+DONOR_LIST_RE = re.compile(
+    r'\bdonors?\s+([\w-]+(?:\s*,\s*[\w-]+)*(?:\s*,?\s*(?:and|&)\s+[\w-]+)?)',
+    re.IGNORECASE)
+
 #: Trailing tokens generic enough, across studies, to be safe to strip when
 #: suggesting a subject id: assay/locus markers and visit/replicate numbers.
 #: Nothing study-specific (e.g. a particular cohort's prefix convention)
@@ -95,17 +114,23 @@ class Evidence:
 
     Arguments:
       accession (str): the SRR/ERR/DRR/GSM accession looked up.
-      status (str): 'ok' if a BioSample sample name was found, 'pooled' if it
-        names more than one donor, 'not_found' if SRA has no record of the
-        accession at all.
-      biosample_accession (str): the SAMN accession, or '' if status is
+      status (str): 'ok' if a sample name was found (from BioSample or, for a
+        GSM, GEO itself), 'pooled' if it names more than one donor,
+        'not_found' if neither has any record of the accession at all.
+      biosample_accession (str): the SAMN accession, or '' if none was found
+        -- which happens for status 'not_found', and also for a GSM GEO
+        resolved but that has no SRA/BioSample record of its own (see
+        resolveGsmTitles).
+      sample_name (str): the raw text NCBI associates with the sample: for a
+        GSM GEO has a record of, its own title (see resolveGsmTitles for why
+        that wins); otherwise the BioSample's own 'Sample name' identifier
+        when the submitter set one, its Title otherwise, or (rarely) the SRA
+        experiment's own title as a last resort. Never normalized — see
+        suggestSubject for that.
+      url (str): a page a person can open to check this by hand -- the
+        BioSample page when biosample_accession is set, the GSM's own GEO
+        page when it is a GSM resolved through GEO alone, or '' if status is
         'not_found'.
-      sample_name (str): the raw text NCBI associates with the sample: the
-        BioSample's own 'Sample name' identifier when the submitter set one,
-        its Title otherwise, or (rarely) the SRA experiment's own title as a
-        last resort. Never normalized — see suggestSubject for that.
-      url (str): a BioSample page a person can open to check this by hand, or
-        '' if status is 'not_found'.
       pooled_codes (tuple): the donor codes named in sample_name, if status is
         'pooled'; empty otherwise.
     """
@@ -146,18 +171,40 @@ def poolCodes(text):
     """
     Read off the donor codes named in a pooled/hashed sample's description.
 
+    Two unrelated phrasings are recognized, tried in order:
+
+    - POOLED_RE's own vocabulary ('hashed'/'pooled'/'multiplexed') with a
+      parenthesized code list, e.g. 'Hashed scBCR sample (FA007, FA048)'.
+    - DONOR_LIST_RE's plain-prose donor list, no keyword or parentheses at
+      all, e.g. Ferreira_2024's 'BCR-Seq, BNT/BNT d7, donor 31, 32 and 33'.
+      Checked even when the first pattern already matched nothing, since a
+      description can name several donors without ever using the word
+      'pooled' -- and checked *before* trusting an empty POOLED_RE result,
+      because the two are independent tells, not a fallback chain.
+
     Arguments:
       text (str): a BioSample sample name or SRA title, e.g.
-        'Hashed scBCR sample (FA007, FA048)'.
+        'Hashed scBCR sample (FA007, FA048)' or
+        'BCR-Seq, BNT/BNT d7, donor 31, 32 and 33'.
 
     Returns:
       tuple: the codes found, e.g. ('FA007', 'FA048'); empty if the text does
         not read as a pooled sample or names only one code.
     """
-    if not POOLED_RE.search(text or ''):
+    text = text or ''
+
+    donor_match = DONOR_LIST_RE.search(text)
+    if donor_match:
+        codes = tuple(code for code in
+                      re.split(r'\s*(?:,|\band\b|&)\s*', donor_match.group(1).strip())
+                      if code)
+        if len(codes) > 1:
+            return codes
+
+    if not POOLED_RE.search(text):
         return ()
 
-    match = re.search(r'\(([^)]+)\)', text or '')
+    match = re.search(r'\(([^)]+)\)', text)
     if not match:
         return ()
 
@@ -287,6 +334,67 @@ def resolveAccessions(client, accessions, api_key=None, chunk_size=CHUNK_SIZE):
     return resolved
 
 
+def resolveGsmTitles(client, gsm_accessions, api_key=None, chunk_size=CHUNK_SIZE):
+    """
+    Look up GEO's own title for a batch of GSM sample accessions.
+
+    A GSM does not always have a discoverable SRA record: resolveAccessions
+    finds one only when the SRA experiment's own title happens to echo the
+    GSM, and a 10x submission commonly shares one SRA experiment across
+    several sibling GSMs (demultiplexed scBCR/scRNA/hashing subsets), naming
+    none of them individually -- in that case an SRA-only lookup reports
+    'not_found' for a GSM that plainly exists. GEO's own 'gds' database, by
+    contrast, indexes every GSM by its own accession directly, so this finds
+    it regardless.
+
+    It is also worth consulting even when resolveAccessions *does* find the
+    GSM's BioSample: in practice GEO's title is the more reliably
+    subject-bearing of the two. A submitter's GEO deposit is human-authored
+    prose meant for GEO's own browse page ('scBCR, adult male, subject P04,
+    lymph node, ...'); the linked BioSample record is a separate, more
+    variable submission that may carry only the assay-level description and
+    drop the subject entirely.
+
+    Arguments:
+      client (HttpClient): the shared HTTP client.
+      gsm_accessions (list): GSM accessions; deduplicated internally.
+      api_key (str): an NCBI API key, if available.
+      chunk_size (int): accessions per esearch/esummary batch.
+
+    Returns:
+      dict: GSM accession to GEO's own Sample title (str). A GSM GEO itself
+        has no record of is absent, same convention as resolveAccessions.
+    """
+    key_param = {'api_key': api_key} if api_key else {}
+
+    titles = {}
+    accessions = sorted(set(a for a in gsm_accessions if a))
+
+    for batch in _chunks(accessions, chunk_size):
+        term = ' OR '.join('%s[Accession]' % accession for accession in batch)
+        response = client.get(_eutilsUrl('esearch', db='gds', term=term,
+                                         retmax=500, **key_param))
+
+        ids = [node.text for node in ET.fromstring(response.text).findall('.//IdList/Id')]
+        if not ids:
+            continue
+
+        for id_batch in _chunks(ids, 100):
+            response = client.get(_eutilsUrl('esummary', db='gds',
+                                             id=','.join(id_batch), **key_param))
+
+            for docsum in ET.fromstring(response.text).findall('.//DocSum'):
+                # The '[Accession]' search also surfaces the GSM's parent
+                # GSE (series) and GPL (platform) records, each carrying its
+                # own different Accession -- keep only the sample's own.
+                accession = docsum.findtext("Item[@Name='Accession']")
+                title = docsum.findtext("Item[@Name='title']")
+                if accession in batch and title:
+                    titles[accession] = title
+
+    return titles
+
+
 def fetchBiosamples(client, biosample_accessions, api_key=None, chunk_size=100):
     """
     Fetch the sample name NCBI shows for a batch of BioSample accessions.
@@ -337,9 +445,16 @@ def gatherEvidence(client, accessions, api_key=None):
     """
     Resolve a batch of run/sample accessions to NCBI evidence in one pass.
 
-    Combines resolveAccessions and fetchBiosamples, then classifies each
-    result: a sample name that reads as a multi-donor pool (see poolCodes)
-    gets status 'pooled' rather than a guessed single subject.
+    Combines resolveAccessions and fetchBiosamples with, for GSM accessions,
+    resolveGsmTitles, then classifies each result: a sample name that reads
+    as a multi-donor pool (see poolCodes) gets status 'pooled' rather than a
+    guessed single subject.
+
+    A GSM's GEO title wins over its SRA/BioSample text whenever GEO has one
+    (see resolveGsmTitles for why), so a GSM resolved through both routes
+    reports GEO's title as sample_name but still links BIOSAMPLE_URL, since
+    that record exists and is the more authoritative one to hand a reviewer;
+    only a GSM with no SRA/BioSample of its own falls back to GEO_URL.
 
     Arguments:
       client (HttpClient): the shared HTTP client.
@@ -357,13 +472,13 @@ def gatherEvidence(client, accessions, api_key=None):
     biosample_accessions = [biosample for biosample, _ in resolved.values()]
     names = fetchBiosamples(client, biosample_accessions, api_key=api_key)
 
+    gsm_accessions = [a for a in accessions if a.startswith('GSM')]
+    gds_titles = (resolveGsmTitles(client, gsm_accessions, api_key=api_key)
+                 if gsm_accessions else {})
+
     evidence = {}
     for accession in accessions:
-        if accession not in resolved:
-            evidence[accession] = Evidence(accession=accession, status='not_found')
-            continue
-
-        biosample_accession, description = resolved[accession]
+        biosample_accession, description = resolved.get(accession, ('', ''))
         # fetchBiosamples already prefers the Sample name Id over a
         # BioSample's own Title (see its docstring), so this only falls back
         # further when the record contributed no usable text at all -- no
@@ -372,14 +487,23 @@ def gatherEvidence(client, accessions, api_key=None):
         # the same text a person would see on the run's trace page without
         # ever following the BioSample link at all.
         sample_name = names.get(biosample_accession) or description
+        # GEO's own title, when this is a GSM GEO has a record of, wins over
+        # whatever the SRA/BioSample route produced -- see resolveGsmTitles.
+        sample_name = gds_titles.get(accession) or sample_name
+
+        if not sample_name:
+            evidence[accession] = Evidence(accession=accession, status='not_found')
+            continue
 
         codes = poolCodes(sample_name)
+        url = (BIOSAMPLE_URL % biosample_accession if biosample_accession
+              else GEO_URL % accession if accession in gds_titles else '')
         evidence[accession] = Evidence(
             accession=accession,
             status='pooled' if codes else 'ok',
             biosample_accession=biosample_accession,
             sample_name=sample_name,
-            url=BIOSAMPLE_URL % biosample_accession if biosample_accession else '',
+            url=url,
             pooled_codes=codes)
 
     return evidence

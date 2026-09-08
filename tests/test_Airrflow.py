@@ -16,6 +16,7 @@ from pathlib import Path
 from sourcerer.Airrflow import (
     SAMPLESHEET_COLUMNS,
     buildSamplesheet,
+    countUnresolvedSubjects,
     loadSamplesheet,
     targetLocus,
 )
@@ -54,6 +55,30 @@ class TestTargetLocus(unittest.TestCase):
         """
         with self.assertRaises(ValueError):
             targetLocus(['IGH', 'TRB'])
+
+
+class TestCountUnresolvedSubjects(unittest.TestCase):
+    """
+    Tests for the unresolved-subject count `handleDownload` warns from
+    """
+
+    def test_counts_only_null_sentinel_subjects(self):
+        """A mix of real, missing, and sentinel Subject values counts right."""
+        entries = [
+            (makeUnit('A_2020/x.csv.gz', Subject='Donor-1'), Path('a')),
+            (makeUnit('B_2020/y.csv.gz', Subject='no'), Path('b')),
+            (makeUnit('C_2020/z.csv.gz', Subject='None'), Path('c')),
+            (makeUnit('D_2020/w.csv.gz'), Path('d')),
+        ]
+
+        self.assertEqual(countUnresolvedSubjects(entries), 3)
+
+    def test_zero_when_every_unit_has_a_subject(self):
+        """Nothing to warn about when OAS recorded a subject for every unit."""
+        entries = [(makeUnit('A_2020/x.csv.gz', Subject='Donor-1'), Path('a')),
+                  (makeUnit('B_2020/y.csv.gz', Subject='Donor-2'), Path('b'))]
+
+        self.assertEqual(countUnresolvedSubjects(entries), 0)
 
 
 class TestSamplesheetMerge(unittest.TestCase):

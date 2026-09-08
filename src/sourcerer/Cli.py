@@ -18,7 +18,7 @@ from pathlib import Path
 
 # Sourcerer imports
 from sourcerer import Catalog, Convert, Ncbi, Provenance, Reference
-from sourcerer.Airrflow import buildSamplesheet
+from sourcerer.Airrflow import buildSamplesheet, countUnresolvedSubjects
 from sourcerer.Commandline import CommonHelpFormatter, setupLogging
 from sourcerer.Exceptions import SourcererError
 from sourcerer.Http import HttpClient
@@ -663,12 +663,27 @@ def handleDownload(args):
 
     # A samplesheet is a derived artifact of a data format, so one is written per
     # converted format rather than one ambiguous sheet naming a single file.
+    #
+    # Computed once, from the raw bucket rather than per format: every unit is
+    # in it regardless of which formats were requested, and a unit's Subject
+    # metadata does not depend on which format its samplesheet row ends up in.
+    unresolved = countUnresolvedSubjects(written['raw'])
     for fmt in ('airr', 'fasta'):
         if written.get(fmt):
             sheet = outdir / ('samplesheet_airrflow_%s.tsv' % fmt)
             buildSamplesheet(written[fmt], sheet, args.collection, outdir,
                              loci=loci)
             log.info('wrote %s', sheet)
+            if unresolved:
+                # The likeliest silent-wrong-analysis outcome this command can
+                # produce: every one of these rows gets the same OAS sentinel
+                # ('no'/'None') as subject_id, so airrflow would treat them as
+                # one subject unless the user runs verify first.
+                log.warning(
+                    "%d of %d units have no subject recorded in OAS; run "
+                    "'sourcerer oas verify %s' to cross-reference them "
+                    'against NCBI before using this samplesheet',
+                    unresolved, len(units), sheet)
 
     # Written for every run, including raw-only ones: the raw mirror is the part
     # of the output that cannot be regenerated from anything else here.

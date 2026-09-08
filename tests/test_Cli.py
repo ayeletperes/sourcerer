@@ -164,7 +164,8 @@ class StubSource(SourceBase):
     unit = DataUnit(unit_id='Study_2020/csv_paired/x_1_Paired_All.csv.gz',
                     collection='paired',
                     url='https://example.invalid/x.csv.gz',
-                    metadata={'Species': 'human'}, n_sequences=2)
+                    metadata={'Species': 'human', 'Subject': 'Donor-1'},
+                    n_sequences=2)
 
     def harvestSchema(self):
         raise NotImplementedError
@@ -260,6 +261,32 @@ class TestHandleDownload(unittest.TestCase):
         self.assertTrue(list(self.outdir.rglob('raw/**/*.csv.gz')))
         self.assertFalse((self.outdir / 'samplesheet_airrflow_fasta.tsv').exists())
         self.assertEqual(list(self.outdir.glob('fasta/*.fasta')), [])
+
+    def test_unresolved_subjects_are_warned_about(self):
+        """
+        A batch where OAS recorded no subject at all warns, naming the
+        samplesheet to run `sourcerer oas verify` against.
+
+        This is the most likely silent-wrong-analysis outcome download can
+        produce: every such row gets the same OAS sentinel as subject_id,
+        so airrflow would treat them all as one subject unless the user
+        runs verify first.
+        """
+        unit = DataUnit(unit_id=StubSource.unit.unit_id, collection='paired',
+                        url=StubSource.unit.url,
+                        metadata={'Species': 'human', 'Subject': 'no'},
+                        n_sequences=2)
+        with mock.patch.object(StubSource, 'unit', unit):
+            with self.assertLogs('sourcerer', level='WARNING') as logs:
+                self.assertEqual(self.runDownload(), 0)
+
+        self.assertTrue(any('no subject recorded in OAS' in m for m in logs.output))
+        self.assertTrue(any('oas verify' in m for m in logs.output))
+
+    def test_resolved_subjects_are_not_warned_about(self):
+        """A batch where every unit already has a real subject stays quiet."""
+        with self.assertNoLogs('sourcerer', level='WARNING'):
+            self.assertEqual(self.runDownload(), 0)
 
     def test_both_formats_write_one_samplesheet_each(self):
         """

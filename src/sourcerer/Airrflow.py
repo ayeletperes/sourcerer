@@ -207,6 +207,28 @@ def mergeSamplesheet(existing, fresh):
     return merged
 
 
+def countUnresolvedSubjects(entries):
+    """
+    Count data units whose Subject metadata is one of OAS's own null sentinels.
+
+    A unit like this writes that raw sentinel ('no', 'None', ...) into the
+    samplesheet's subject_id column rather than a real identifier -- see
+    buildSamplesheet's own comment on why the value is kept raw rather than
+    collapsed to a placeholder. `sourcerer oas verify` is what turns those
+    into real evidence from NCBI; this count is what a caller uses to decide
+    whether it is worth telling the user to run it.
+
+    Arguments:
+      entries (list): (DataUnit, Path) pairs, the same shape buildSamplesheet
+        takes; only the unit's metadata is read here.
+
+    Returns:
+      int: how many units carry no recorded subject.
+    """
+    return sum(1 for unit, _ in entries
+              if isNull((unit.metadata or {}).get('Subject')))
+
+
 def buildSamplesheet(entries, out, collection, root=None, loci=None):
     """
     Write an airrflow samplesheet describing converted data units.

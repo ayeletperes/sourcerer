@@ -316,9 +316,10 @@ def _addSourceParser(commands, name, source):
                                       choices=FORMATS,
                                       help='what to write, repeatable to write '
                                            'several; raw mirrors the source files '
-                                           'untouched and is always written because '
-                                           'the others are converted from it, so '
-                                           'omitting this writes raw alone')
+                                           'untouched and is always written whether '
+                                           'or not it is requested, since airr and '
+                                           'fasta are converted from it, so omitting '
+                                           'this writes airr alone')
                     leaf.add_argument('--strict-airr', action='store_true',
                                       help='drop columns the AIRR schema does '
                                            'not define')
@@ -605,7 +606,12 @@ def handleDownload(args):
                             limit=args.limit)
 
     units = source.searchUnits(query)
-    formats = args.formats or ['raw']
+    # Defaults to airr, not raw: sourcerer exists to hand Immcantation
+    # something it can use directly, and the raw mirror alone (the previous
+    # default) needs a second `download` run before airrflow can read
+    # anything. Nothing is lost by defaulting this way -- raw is always
+    # written regardless, see the bucket comment below.
+    formats = args.formats or ['airr']
     total = sum(x.n_sequences or 0 for x in units)
 
     log.info('%d data units, %s sequences, formats: %s',

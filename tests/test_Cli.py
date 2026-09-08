@@ -244,6 +244,23 @@ class TestHandleDownload(unittest.TestCase):
 
         self.assertEqual(list(self.outdir.glob('samplesheet_*')), [])
 
+    def test_no_format_flag_defaults_to_airr_not_raw_alone(self):
+        """
+        Omitting --format writes something airrflow can use immediately.
+
+        The previous default (raw alone) left a user with nothing to run
+        airrflow on until they reran the command with --format; defaulting
+        to airr means the first download already produces a samplesheet.
+        The raw mirror is still written either way, since conversion reads
+        from it.
+        """
+        self.assertEqual(self.runDownload(), 0)
+
+        self.assertTrue((self.outdir / 'samplesheet_airrflow_airr.tsv').exists())
+        self.assertTrue(list(self.outdir.rglob('raw/**/*.csv.gz')))
+        self.assertFalse((self.outdir / 'samplesheet_airrflow_fasta.tsv').exists())
+        self.assertEqual(list(self.outdir.glob('fasta/*.fasta')), [])
+
     def test_both_formats_write_one_samplesheet_each(self):
         """
         Each converted format gets its own samplesheet.

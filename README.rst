@@ -40,8 +40,7 @@ Datasets (OAS), producing an airrflow samplesheet:
 .. code-block:: bash
 
     sourcerer --version
-    sourcerer oas download paired --species human --limit 1 --outdir tmp    # To convert to fasta, rerun (hashes any file already on disk)
-    sourcerer oas download paired --species human --limit 3 --outdir tmp --format fasta
+    sourcerer oas download paired --species human --limit 3 --outdir tmp --format airr --format fasta
     sourcerer oas verify tmp/samplesheet_airrflow_fasta.tsv    # cross-reference unresolved subjects against NCBI
     cd tmp
     nextflow run nf-core/airrflow -r 5.1.0 \

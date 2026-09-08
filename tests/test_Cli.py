@@ -20,6 +20,7 @@ import pandas
 # Sourcerer imports
 from sourcerer.Cli import (
     NCBI_EVIDENCE_COLUMNS,
+    formatUnitTable,
     getArgParser,
     handleDownload,
     handleOasVerify,
@@ -146,6 +147,54 @@ class TestArgParser(unittest.TestCase):
         walk(getArgParser(), 'sourcerer')
 
         self.assertEqual(doubled, [])
+
+    def test_presence_flags_spell_out_their_tokens(self):
+        """
+        A presence-only flag's usage names the tokens it takes.
+
+        `--subject VALUE` said nothing about what VALUE could be; the user only
+        learnt 'defined'/'undefined' from the rejection message.
+        """
+        parser = getArgParser()
+        with mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            with self.assertRaises(SystemExit):
+                parser.parse_args(['oas', 'search', 'paired', '--help'])
+
+        text = out.getvalue()
+        self.assertIn('--subject {*,defined,undefined}', text)
+        self.assertIn('--species VALUE', text)
+
+
+class TestFormatUnitTable(unittest.TestCase):
+    """
+    Tests for the search/dry-run stdout table
+    """
+
+    def test_shows_metadata_beside_each_hit(self):
+        """
+        The table carries enough metadata to pick units without --out.
+
+        unit_id and a count alone left the user unable to tell one donor's
+        run from another's without first saving a catalog.
+        """
+        units = [DataUnit(unit_id='A_2020/csv/a.csv.gz', collection='paired',
+                          url='u', n_sequences=12,
+                          metadata={'Species': 'human', 'Disease': 'None',
+                                    'Subject': 'Donor-1', 'BSource': 'PBMC'}),
+                 DataUnit(unit_id='B_2021/csv/b.csv.gz', collection='paired',
+                          url='u', n_sequences=None, metadata={})]
+
+        lines = formatUnitTable(units).split('\n')
+
+        self.assertEqual(lines[0].split(),
+                         ['unit_id', 'n_unique_sequences', 'Species', 'Disease',
+                          'Subject', 'BSource'])
+        self.assertEqual(lines[1].split(),
+                         ['A_2020/csv/a.csv.gz', '12', 'human', 'None',
+                          'Donor-1', 'PBMC'])
+        # A unit with no metadata still lines up under the same header.
+        self.assertTrue(lines[2].startswith('B_2021/csv/b.csv.gz'))
+        self.assertEqual(len(lines), 3)
 
 
 class StubSource(SourceBase):
@@ -300,6 +349,26 @@ class TestHandleDownload(unittest.TestCase):
         self.assertTrue((self.outdir / 'samplesheet_airrflow_airr.tsv').exists())
         self.assertTrue((self.outdir / 'samplesheet_airrflow_fasta.tsv').exists())
 
+    def test_both_formats_convert_each_unit_once(self):
+        """
+        Requesting two formats reads and normalizes each unit once, not twice.
+
+        Conversion is the expensive step (a multi-GB gzip read plus pandas
+        normalization), and each format used to pull its own pass through it.
+        Both writers are fed from the same chunk stream now, so airr+fasta
+        costs one conversion, and both files still come out complete.
+        """
+        with mock.patch.object(StubSource, 'convertUnit',
+                               autospec=True,
+                               side_effect=StubSource.convertUnit) as convert:
+            self.assertEqual(self.runDownload('airr', 'fasta'), 0)
+
+        self.assertEqual(convert.call_count, 1)
+        airr = next(self.outdir.glob('airr/*.tsv')).read_text().splitlines()
+        fasta = next(self.outdir.glob('fasta/*.fasta')).read_text().splitlines()
+        self.assertEqual(len(airr), 3)
+        self.assertEqual(len(fasta), 4)
+
 
 #: A samplesheet header narrow enough for verify's own tests: it only reads
 #: sample_id, sample_name and subject_id, so the rest is set dressing.
@@ -371,7 +440,7 @@ class TestHandleOasVerify(unittest.TestCase):
         OAS recording a subject is not proof it is correct -- a typo, a
         short code reused across studies, or a pooled run naming several
         donors under one value are all real failure modes -- so verify
-        looks the accession up regardless, and biosample_id always carries
+        looks the accession up regardless, and ncbi_sample_name always carries
         NCBI's own text rather than a copy of subject_id. Here NCBI's
         BL-110_VDJ has nothing in common with 'Donor-2', so subject_check
         reports 'differs'.
@@ -385,8 +454,8 @@ class TestHandleOasVerify(unittest.TestCase):
         rows = self.readReport()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['status'], 'ok')
-        self.assertEqual(rows[0]['biosample_id'], 'BL-110_VDJ')
-        self.assertEqual(rows[0]['biosample_id_suggested'], 'BL-110')
+        self.assertEqual(rows[0]['ncbi_sample_name'], 'BL-110_VDJ')
+        self.assertEqual(rows[0]['ncbi_subject_suggested'], 'BL-110')
         self.assertEqual(rows[0]['subject_check'], 'differs')
 
     def test_a_real_subject_id_that_matches_ncbi_agrees(self):
@@ -438,12 +507,13 @@ class TestHandleOasVerify(unittest.TestCase):
         rows = self.readReport()
         self.assertEqual(rows[0]['status'], 'no_accession')
         self.assertEqual(rows[0]['subject_check'], 'unverified')
-        self.assertEqual(rows[0]['biosample_id'], '')
+        self.assertEqual(rows[0]['ncbi_sample_name'], '')
 
-    def test_resolved_row_gets_both_a_raw_and_a_suggested_biosample_id(self):
+    def test_resolved_row_gets_both_the_raw_name_and_a_suggested_subject(self):
         """
-        A resolved row's report names its BioSample, a check link, and both
-        forms of biosample_id -- no flag needed to choose between them.
+        A resolved row's report names its BioSample, a check link, NCBI's raw
+        sample name and the subject suggested from it -- no flag needed to
+        choose between them.
         """
         self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
                                'subject_id': 'no', 'species': 'human',
@@ -455,8 +525,8 @@ class TestHandleOasVerify(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['status'], 'ok')
         self.assertEqual(rows[0]['biosample_accession'], 'SAMN1')
-        self.assertEqual(rows[0]['biosample_id'], 'BL-110_VDJ')
-        self.assertEqual(rows[0]['biosample_id_suggested'], 'BL-110')
+        self.assertEqual(rows[0]['ncbi_sample_name'], 'BL-110_VDJ')
+        self.assertEqual(rows[0]['ncbi_subject_suggested'], 'BL-110')
         self.assertEqual(rows[0]['subject_check'], 'unresolved')
         self.assertIn('SAMN1', rows[0]['biosample_url'])
 
@@ -510,7 +580,7 @@ class TestHandleOasVerify(unittest.TestCase):
         self.assertTrue(out.exists())
         self.assertFalse(self.samplesheet.with_name(
             self.samplesheet.stem + '.ncbi_evidence' + self.samplesheet.suffix).exists())
-        self.assertEqual(self.readReport(out)[0]['biosample_id'], 'BL-110_VDJ')
+        self.assertEqual(self.readReport(out)[0]['ncbi_sample_name'], 'BL-110_VDJ')
 
     def test_missing_required_column_is_reported_by_name(self):
         """A samplesheet missing a column verify needs names it in the error."""

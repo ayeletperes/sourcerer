@@ -14,15 +14,16 @@ import logging
 import os
 import sys
 from argparse import ArgumentParser
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Sourcerer imports
-from sourcerer import Catalog, Convert, Ncbi, Provenance, Reference
+from sourcerer import Catalog, Contracts, Convert, Ncbi, Provenance, Reference
 from sourcerer.Airrflow import buildSamplesheet, countUnresolvedSubjects
 from sourcerer.Commandline import CommonHelpFormatter, setupLogging
 from sourcerer.Exceptions import SourcererError
 from sourcerer.Http import HttpClient
-from sourcerer.Schema import loadSchema, saveSchema
+from sourcerer.Schema import PSEUDO_VALUES, loadSchema, saveSchema
 from sourcerer.Sources import ALIASES, REGISTRY, canonicalName, getSource
 from sourcerer.Sources.Oas import isNull
 from sourcerer.Version import __date__, __version__
@@ -77,8 +78,13 @@ def addFilterArgs(parser, schema, source, collection):
         return
 
     for item in schema.getCollection(collection).fields:
+        # A presence-only flag takes a fixed token set, so the usage line spells
+        # it out the way argparse does for choices; the others take a value
+        # from a vocabulary too long for the usage line, listed in the help.
+        metavar = 'VALUE'
         if item.pseudo_values:
             summary = 'filter on whether %s is recorded' % item.name
+            metavar = '{%s,%s}' % (item.wildcard, ','.join(sorted(PSEUDO_VALUES)))
         elif len(item.values) <= VALUE_LIST_CAP:
             summary = '%d values: %s' % (len(item.values), ', '.join(item.values))
         else:
@@ -91,7 +97,7 @@ def addFilterArgs(parser, schema, source, collection):
                        % (len(item.values), shown, source, collection, item.name))
 
         parser.add_argument(item.flag, dest='filter_%s' % item.name,
-                            metavar='VALUE', default=None, help=summary)
+                            metavar=metavar, default=None, help=summary)
 
 
 def collectFilters(args):
@@ -239,6 +245,35 @@ def _addSchemaParser(commands):
     refresh.add_argument('--detail-limit', type=int, default=None,
                          help='stop after this many detail pages')
 
+    check = actions.add_parser(
+        'check', help='classify drift between two snapshots',
+        description='Compare the packaged snapshot against a stored one and '
+                    'classify every difference by severity: additive (new '
+                    'values or units), anomaly (internal inconsistency), '
+                    'removed (something users may pin disappeared) or '
+                    'structural (the shape sourcerer parses changed). The '
+                    'exit status reflects the overall level when it reaches '
+                    'the --fail-on threshold.',
+        formatter_class=CommonHelpFormatter)
+    check.add_argument('--source', required=True,
+                       choices=sorted(REGISTRY) + sorted(ALIASES),
+                       help='which source to check')
+    check.add_argument('--against', default='git:HEAD',
+                       help='what to compare the packaged snapshot to: '
+                            'git:REV reads the snapshot committed at that '
+                            'revision, anything else is a snapshot directory')
+    check.add_argument('--report', type=Path, default=None,
+                       help='write the findings as JSON to this file')
+    check.add_argument('--markdown', type=Path, default=None,
+                       help='write the findings as markdown to this file')
+    check.add_argument('--fail-on', default='structural',
+                       choices=['never', 'additive', 'anomaly', 'removed',
+                                'structural'],
+                       help='exit non-zero when the overall level is at or '
+                            'above this; never always exits 0')
+    check.add_argument('--no-probe', action='store_true',
+                       help='skip the live URL rule probe, for offline use')
+
 
 def _addSourceParser(commands, name, source):
     """Add one source's subcommand tree, with a level per collection."""
@@ -342,9 +377,9 @@ def _addOasVerifyAction(actions):
 
     Deliberately two flags, not the larger surface an earlier version of this
     command had (--apply, --use-suggestion, --evidence-out, --limit): the
-    report is the one thing this command produces, always with both a raw and
-    a suggested biosample_id, so there was nothing left for a flag to switch
-    between. It carries every column the input samplesheet had, evidence
+    report is the one thing this command produces, always with both NCBI's raw
+    sample name and a suggested subject, so there was nothing left for a flag
+    to switch between. It carries every column the input samplesheet had, evidence
     columns appended, so it is a drop-in airrflow input rather than a
     side file -- see buildEvidenceRow and NCBI_EVIDENCE_COLUMNS.
     """
@@ -359,10 +394,10 @@ def _addOasVerifyAction(actions):
                     'short code reused across studies, or a pooled/hashed '
                     'run naming several donors under one value), and '
                     'NCBI\'s own record is independent evidence either way. '
-                    'biosample_id carries NCBI\'s raw sample name -- never '
+                    'ncbi_sample_name carries NCBI\'s raw sample name -- never '
                     'guessed at further, since some studies\' names need '
                     'study-specific reading to turn into a subject id (see '
-                    'the module docstring in Ncbi.py); biosample_id_suggested '
+                    'the module docstring in Ncbi.py); ncbi_subject_suggested '
                     'carries the same value with the handful of generic '
                     'patterns (a trailing locus or visit suffix) stripped, '
                     'the ones safe to normalize regardless of study. '
@@ -373,7 +408,7 @@ def _addOasVerifyAction(actions):
                     '\'unverified\' when NCBI itself could not resolve the '
                     'accession. A pooled/multi-donor run gets an '
                     'AMBIGUOUS_POOLED marker naming the donor codes in both '
-                    'biosample_id columns instead of a guessed single '
+                    'ncbi_ columns instead of a guessed single '
                     'subject. Because every input column survives, the '
                     'report can be pointed at directly as airrflow --input '
                     'once subject_id is filled in or corrected for any row '
@@ -392,8 +427,9 @@ def _addOasVerifyAction(actions):
                              'for samplesheet_airrflow_fasta.tsv')
     verify.add_argument('--ncbi-api-key', default=None,
                         help='an NCBI API key, raising the polite request '
-                             'rate from 3/s to 10/s; falls back to the '
-                             'NCBI_API_KEY environment variable')
+                             'rate from 3/s to 10/s; prefer setting the '
+                             'NCBI_API_KEY environment variable instead, '
+                             'since a key given here ends up in shell history')
 
 
 def makeClient(args):
@@ -465,8 +501,10 @@ def handleSchemaRefresh(args):
 
     written, changed = saveSchema(schema, out)
     log.info('%s %s', 'wrote' if changed else 'unchanged, left alone:', written)
+    changed_any = changed
 
     wanted = args.collection or list(source.collections)
+    catalogs = {}
     for collection in wanted:
         log.info('harvesting %s %s catalog', args.source, collection)
         rows = source.harvestCatalog(collection, schema=schema)
@@ -482,10 +520,61 @@ def handleSchemaRefresh(args):
                          len(pending), collection)
                 source.enrichCatalog(rows, limit=args.detail_limit, force=force)
 
-        Catalog.saveCatalog(rows, path)
-        log.info('wrote %s (%d units)', path, len(rows))
+        path, changed = Catalog.saveCatalog(rows, path)
+        log.info('%s %s (%d units)',
+                 'wrote' if changed else 'unchanged, left alone:', path, len(rows))
+        changed_any = changed_any or changed
+        catalogs[collection] = rows
+
+    for name, (path, changed) in sorted(
+            source.harvestArtifacts(out, schema, catalogs).items()):
+        log.info('%s %s', 'wrote' if changed else 'unchanged, left alone:', path)
+        changed_any = changed_any or changed
+
+    # The provenance record moves only when the snapshot did: a quiet refresh
+    # leaves every tracked file alone, which is what keeps the scheduled
+    # workflow from opening a pull request on a quiet month.
+    if changed_any:
+        stamp = datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+        record = Contracts.saveProvenance(out, stamp, __version__)
+        log.info('wrote %s', record)
 
     return 0
+
+
+def handleSchemaCheck(args):
+    """Classify drift between the packaged snapshot and a stored one."""
+    from sourcerer import Drift
+
+    args.source = canonicalName(args.source)
+
+    old = Drift.loadSnapshot(args.source, args.against)
+    new = Drift.loadSnapshotDir(args.source)
+    client = None if args.no_probe else makeClient(args)
+
+    findings = Drift.checkDrift(old, new, client=client)
+    report = Drift.buildReport(args.source, args.against, findings)
+
+    if args.report is not None:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(Contracts.serializeJson(report))
+        log.info('wrote %s', args.report)
+    if args.markdown is not None:
+        args.markdown.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown.write_text(Drift.renderMarkdown(report))
+        log.info('wrote %s', args.markdown)
+
+    level = report['overall_level']
+    if not findings:
+        log.info('no drift against %s', args.against)
+    else:
+        for finding in findings:
+            where = (' [%s]' % finding.collection) if finding.collection else ''
+            log.info('%-10s %s%s: %s', finding.level, finding.category, where,
+                     finding.message)
+        log.info('overall level: %s (%d finding(s))', level, len(findings))
+
+    return Drift.exitCode(findings, args.fail_on)
 
 
 def handleSearch(args):
@@ -511,11 +600,42 @@ def handleSearch(args):
     if args.out is not None:
         Catalog.saveCatalog(rows, args.out)
         log.info('wrote %s', args.out)
-    else:
-        for unit in units:
-            print('%-64s %10s' % (unit.unit_id, unit.n_sequences or ''))
+    elif units:
+        print(formatUnitTable(units))
 
     return 0
+
+
+#: Metadata shown beside each hit on stdout: enough to tell units apart and
+#: pick the ones to download without first saving a catalog with --out.
+SEARCH_COLUMNS = ('Species', 'Disease', 'Subject', 'BSource')
+
+
+def formatUnitTable(units, columns=SEARCH_COLUMNS):
+    """
+    Render data units as an aligned text table for stdout.
+
+    Arguments:
+      units (list): DataUnit objects.
+      columns (tuple): metadata keys to show after the identifier and count.
+
+    Returns:
+      str: the table, header first, without a trailing newline.
+    """
+    header = ['unit_id', 'n_unique_sequences'] + list(columns)
+    rows = [[x.unit_id, str(x.n_sequences or '')]
+            + [str(x.metadata.get(c, '') or '') for c in columns]
+            for x in units]
+    widths = [max(len(row[i]) for row in [header] + rows)
+              for i in range(len(header))]
+
+    lines = []
+    for row in [header] + rows:
+        cells = [row[0].ljust(widths[0]), row[1].rjust(widths[1])]
+        cells += [cell.ljust(width) for cell, width in zip(row[2:], widths[2:])]
+        lines.append('  '.join(cells).rstrip())
+
+    return '\n'.join(lines)
 
 
 def handleReference(args):
@@ -618,8 +738,8 @@ def handleDownload(args):
              len(units), format(total, ','), ', '.join(formats))
 
     if args.dry_run:
-        for unit in units:
-            print('%-64s %10s' % (unit.unit_id, unit.n_sequences or ''))
+        if units:
+            print(formatUnitTable(units))
         log.info('dry run: nothing downloaded')
         return 0
 
@@ -638,25 +758,38 @@ def handleDownload(args):
         outputs = {}
 
         stem = unit.unit_id.replace('/', '_').replace('.csv.gz', '')
+        # One pass over the unit feeds every requested writer. Converting once
+        # per format read and normalized the whole (multi-GB) file once per
+        # format, so airr+fasta cost twice what airr alone did.
+        writers = {}
         if 'airr' in formats:
-            _, chunks, report = source.convertUnit(result.path, unit)
             dest = outdir / 'airr' / ('%s.tsv' % stem)
-            validation = Convert.writeAirr(chunks, dest, strict=args.strict_airr)
-            Convert.writeValidationReport(validation, dest)
-            log.info('%s: %d rows, %d invalid, %d rows in',
-                     dest.name, validation['rows_checked'],
-                     validation['rows_invalid'], report['rows_in'])
-            loci[unit.unit_id] = report['loci']
-            written['airr'].append((unit, dest))
-            outputs['airr'] = dest
-
+            writers['airr'] = Convert.AirrWriter(dest, strict=args.strict_airr)
         if 'fasta' in formats:
-            _, chunks, report = source.convertUnit(result.path, unit)
             dest = outdir / 'fasta' / ('%s.fasta' % stem)
-            Convert.writeFasta(chunks, dest)
-            loci.setdefault(unit.unit_id, report['loci'])
-            written['fasta'].append((unit, dest))
-            outputs['fasta'] = dest
+            writers['fasta'] = Convert.FastaWriter(dest)
+
+        if writers:
+            _, chunks, report = source.convertUnit(result.path, unit)
+            try:
+                for frame in chunks:
+                    for writer in writers.values():
+                        writer.write(frame)
+            finally:
+                for writer in writers.values():
+                    writer.close()
+
+            loci[unit.unit_id] = report['loci']
+            for fmt, writer in writers.items():
+                written[fmt].append((unit, writer.out))
+                outputs[fmt] = writer.out
+
+            if 'airr' in writers:
+                validation = writers['airr'].validation
+                Convert.writeValidationReport(validation, writers['airr'].out)
+                log.info('%s: %d rows, %d invalid, %d rows in',
+                         writers['airr'].out.name, validation['rows_checked'],
+                         validation['rows_invalid'], report['rows_in'])
 
         provenance.append(
             Provenance.buildUnitRecord(unit, result, outdir, outputs))
@@ -701,7 +834,7 @@ def handleDownload(args):
 #: report is the input samplesheet plus evidence, and can be used in its
 #: place as airrflow input, rather than a separate file missing the columns
 #: airrflow actually reads (`filename`, `species`, `pcr_target_locus`, ...).
-NCBI_EVIDENCE_COLUMNS = ('biosample_id', 'biosample_id_suggested', 'status',
+NCBI_EVIDENCE_COLUMNS = ('ncbi_sample_name', 'ncbi_subject_suggested', 'status',
                          'subject_check', 'accession', 'biosample_accession',
                          'biosample_url', 'pooled_codes')
 
@@ -795,13 +928,13 @@ def buildEvidenceRow(row, found):
 
     Every column already on `row` passes through verbatim -- this only adds
     NCBI_EVIDENCE_COLUMNS, it never edits or drops what was already on the
-    samplesheet. biosample_id and biosample_id_suggested always come from
+    samplesheet. ncbi_sample_name and ncbi_subject_suggested always come from
     NCBI, never from the samplesheet's own subject_id: a real-looking
     subject_id is not proof it is correct, which is exactly what
     subject_check is for. A pooled/multi-donor run gets an AMBIGUOUS_POOLED
     marker in both columns, since there is no single subject to suggest.
-    Anything else takes biosample_id from NCBI's raw sample name and
-    biosample_id_suggested from the generic-heuristic strip of it (see
+    Anything else takes ncbi_sample_name from NCBI's raw sample name and
+    ncbi_subject_suggested from the generic-heuristic strip of it (see
     Ncbi.suggestSubject) -- both always written, so joining this report back
     onto a samplesheet never needs a flag to decide which one it gets.
 
@@ -816,20 +949,20 @@ def buildEvidenceRow(row, found):
     subject_id = row.get('subject_id', '')
 
     if found is None:
-        evidence = {'biosample_id': '', 'biosample_id_suggested': '',
+        evidence = {'ncbi_sample_name': '', 'ncbi_subject_suggested': '',
                    'status': 'no_accession', 'accession': '', 'biosample_accession': '',
                    'biosample_url': '', 'pooled_codes': ''}
     else:
         pooled_codes = ';'.join(found.pooled_codes)
         if found.status == 'pooled':
-            biosample_id = biosample_id_suggested = 'AMBIGUOUS_POOLED:%s' % pooled_codes
+            ncbi_sample_name = ncbi_subject_suggested = 'AMBIGUOUS_POOLED:%s' % pooled_codes
         elif found.status == 'ok':
-            biosample_id = found.sample_name
-            biosample_id_suggested = found.suggested_subject
+            ncbi_sample_name = found.sample_name
+            ncbi_subject_suggested = found.suggested_subject
         else:
-            biosample_id = biosample_id_suggested = ''
-        evidence = {'biosample_id': biosample_id,
-                   'biosample_id_suggested': biosample_id_suggested,
+            ncbi_sample_name = ncbi_subject_suggested = ''
+        evidence = {'ncbi_sample_name': ncbi_sample_name,
+                   'ncbi_subject_suggested': ncbi_subject_suggested,
                    'status': found.status, 'accession': found.accession,
                    'biosample_accession': found.biosample_accession,
                    'biosample_url': found.url, 'pooled_codes': pooled_codes}
@@ -946,6 +1079,8 @@ def main():
                 return handleSchemaShow(args)
             if args.action == 'refresh':
                 return handleSchemaRefresh(args)
+            if args.action == 'check':
+                return handleSchemaCheck(args)
             parser.parse_args([args.command, '--help'])
 
         if args.command == 'reference':

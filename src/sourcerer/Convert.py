@@ -121,9 +121,15 @@ def summarizeValidation(validation):
     return '\n'.join(lines) + '\n'
 
 
-def writeAirr(chunks, out, strict=False, validation=None):
+class AirrWriter:
     """
-    Write normalized records as an AIRR rearrangement TSV.
+    Stream normalized records into an AIRR rearrangement TSV, one chunk at a time.
+
+    A push-style writer rather than a function over an iterable, so that one
+    pass over a converted unit can feed this and a FastaWriter at once: the
+    chunks come from a generator that reads and normalizes a multi-GB file,
+    and pulling it once per output format meant doing that work once per
+    format too.
 
     Validation is performed row by row as the records stream past, using the AIRR
     schema primitives, and is reported rather than enforced. There is no
@@ -135,6 +141,83 @@ def writeAirr(chunks, out, strict=False, validation=None):
     based, so copying that would shift every start and end coordinate by one.
 
     Arguments:
+      out (Path): output path.
+      strict (bool): if True, drop columns the AIRR schema does not define.
+      validation (dict): a report to accumulate into, from newValidation().
+
+    Attributes:
+      validation (dict): the validation report, complete once closed.
+    """
+
+    def __init__(self, out, strict=False, validation=None):
+        self.out = Path(out)
+        self.strict = strict
+        self.validation = newValidation() if validation is None else validation
+        self._writer = None
+        self._handle = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+    def write(self, frame):
+        """
+        Write one chunk, opening the file on the first.
+
+        Arguments:
+          frame (pandas.DataFrame): normalized records.
+        """
+        import airr
+        from airr.schema import RearrangementSchema, ValidationError
+
+        if self._writer is None:
+            fields = list(frame.columns)
+            if self.strict:
+                fields = [x for x in fields if x in RearrangementSchema.properties]
+            self.out.parent.mkdir(parents=True, exist_ok=True)
+            self._handle = open(self.out, 'w')
+            self._writer = airr.io.RearrangementWriter(self._handle, fields=fields,
+                                                       base=1)
+            try:
+                RearrangementSchema.validate_header(self._writer.fields)
+                self.validation['header_valid'] = True
+            except ValidationError as error:
+                self.validation['header_valid'] = False
+                self.validation['header_error'] = str(error)
+
+        for record in frame.to_dict('records'):
+            self.validation['rows_checked'] += 1
+            try:
+                RearrangementSchema.validate_row(record)
+            except ValidationError as error:
+                self.validation['rows_invalid'] += 1
+                self.validation['errors'][str(error)] += 1
+            self._writer.write(record)
+
+    def close(self):
+        """Flush and close; with no chunks written, still leave an empty file."""
+        if self._writer is not None:
+            self._writer.close()
+        elif self._handle is not None:
+            self._handle.close()
+        else:
+            # No chunks at all: still produce a file so downstream steps do
+            # not have to special case its absence.
+            self.out.parent.mkdir(parents=True, exist_ok=True)
+            self.out.write_text('')
+        self._writer, self._handle = None, None
+
+
+def writeAirr(chunks, out, strict=False, validation=None):
+    """
+    Write normalized records as an AIRR rearrangement TSV.
+
+    A convenience over AirrWriter for a caller with a single output; see the
+    class for the details.
+
+    Arguments:
       chunks (iterable): DataFrames of normalized records.
       out (Path): output path.
       strict (bool): if True, drop columns the AIRR schema does not define.
@@ -143,53 +226,11 @@ def writeAirr(chunks, out, strict=False, validation=None):
     Returns:
       dict: the validation report.
     """
-    import airr
-    from airr.schema import RearrangementSchema, ValidationError
-
-    if validation is None:
-        validation = newValidation()
-
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    writer, handle = None, None
-    try:
+    with AirrWriter(out, strict=strict, validation=validation) as writer:
         for frame in chunks:
-            if writer is None:
-                fields = list(frame.columns)
-                if strict:
-                    fields = [x for x in fields
-                              if x in RearrangementSchema.properties]
-                handle = open(out, 'w')
-                writer = airr.io.RearrangementWriter(handle, fields=fields,
-                                                     base=1)
-                try:
-                    RearrangementSchema.validate_header(writer.fields)
-                    validation['header_valid'] = True
-                except ValidationError as error:
-                    validation['header_valid'] = False
-                    validation['header_error'] = str(error)
+            writer.write(frame)
 
-            for record in frame.to_dict('records'):
-                validation['rows_checked'] += 1
-                try:
-                    RearrangementSchema.validate_row(record)
-                except ValidationError as error:
-                    validation['rows_invalid'] += 1
-                    validation['errors'][str(error)] += 1
-                writer.write(record)
-    finally:
-        if writer is not None:
-            writer.close()
-        elif handle is not None:
-            handle.close()
-
-    if writer is None:
-        # No chunks at all: still produce a file so downstream steps do not have
-        # to special case its absence.
-        out.write_text('')
-
-    return validation
+    return writer.validation
 
 
 def writeValidationReport(validation, out):
@@ -209,10 +250,12 @@ def writeValidationReport(validation, out):
     return report
 
 
-def writeFasta(chunks, out, sequence_field='sequence',
-               annotations=FASTA_ANNOTATIONS):
+class FastaWriter:
     """
-    Write normalized records as FASTA with pRESTO style headers.
+    Stream normalized records into a FASTA file with pRESTO style headers.
+
+    Push-style for the same reason as AirrWriter: so both formats can be fed
+    from one pass over a converted unit.
 
     Headers carry the cell, so that the pairing of heavy and light chains
     survives a format that has no other place to put it. See FASTA_ANNOTATIONS
@@ -225,6 +268,65 @@ def writeFasta(chunks, out, sequence_field='sequence',
     have no cell_id at all, and must not appear to have one.
 
     Arguments:
+      out (Path): output path.
+      sequence_field (str): which column holds the sequence.
+      annotations (tuple): AIRR column names to carry as key=value pairs.
+
+    Attributes:
+      written (int): the number of records written so far.
+    """
+
+    def __init__(self, out, sequence_field='sequence',
+                 annotations=FASTA_ANNOTATIONS):
+        self.out = Path(out)
+        self.sequence_field = sequence_field
+        self.annotations = annotations
+        self.written = 0
+        self.out.parent.mkdir(parents=True, exist_ok=True)
+        # Opened up front, unlike AirrWriter, because the FASTA header needs
+        # no column list from the first chunk; an empty unit still gets a file.
+        self._handle = open(self.out, 'w')
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+    def write(self, frame):
+        """
+        Write one chunk.
+
+        Arguments:
+          frame (pandas.DataFrame): normalized records.
+        """
+        for record in frame.to_dict('records'):
+            sequence = str(record.get(self.sequence_field, '') or '')
+            if not sequence:
+                continue
+
+            fields = ['%s=%s' % (x, record[x]) for x in self.annotations
+                      if record.get(x)]
+            header = '|'.join([record.get('sequence_id') or FASTA_NULL] + fields)
+            self._handle.write('>%s\n%s\n' % (header, sequence))
+            self.written += 1
+
+    def close(self):
+        """Close the file."""
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+
+def writeFasta(chunks, out, sequence_field='sequence',
+               annotations=FASTA_ANNOTATIONS):
+    """
+    Write normalized records as FASTA with pRESTO style headers.
+
+    A convenience over FastaWriter for a caller with a single output; see the
+    class for the details.
+
+    Arguments:
       chunks (iterable): DataFrames of normalized records.
       out (Path): output path.
       sequence_field (str): which column holds the sequence.
@@ -233,22 +335,9 @@ def writeFasta(chunks, out, sequence_field='sequence',
     Returns:
       int: the number of records written.
     """
-    out = Path(out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    written = 0
-    with open(out, 'w') as handle:
+    with FastaWriter(out, sequence_field=sequence_field,
+                     annotations=annotations) as writer:
         for frame in chunks:
-            for record in frame.to_dict('records'):
-                sequence = str(record.get(sequence_field, '') or '')
-                if not sequence:
-                    continue
+            writer.write(frame)
 
-                fields = ['%s=%s' % (x, record[x]) for x in annotations
-                          if record.get(x)]
-                header = '|'.join([record.get('sequence_id') or FASTA_NULL]
-                                  + fields)
-                handle.write('>%s\n%s\n' % (header, sequence))
-                written += 1
-
-    return written
+    return writer.written

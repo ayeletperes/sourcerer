@@ -237,7 +237,7 @@ def suggestSubject(text):
     follows, not a pattern this function can read off the string alone.
 
     This is a hint for `sourcerer oas verify`'s evidence report, not a value
-    ever written automatically into biosample_id; see the module docstring.
+    ever written automatically into ncbi_sample_name; see the module docstring.
 
     Arguments:
       text (str): a raw BioSample sample name.

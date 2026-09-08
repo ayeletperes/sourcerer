@@ -66,6 +66,37 @@ class TestValidation(unittest.TestCase):
 
         self.assertIn('human', str(raised.exception))
 
+    def test_accepts_a_unique_case_insensitive_match(self):
+        """
+        'Human' resolves to 'human' rather than erroring with a hint.
+
+        The value sent upstream is the source's own spelling, since the remote
+        form is case sensitive, so what the user typed is normalized rather
+        than passed through.
+        """
+        resolved = self.schema.validateFilters('paired', {'Species': 'Human'})
+        self.assertEqual(resolved['Species'], 'human')
+
+        resolved = self.schema.validateFilters('paired', {'Species': 'RAT_sd'})
+        self.assertEqual(resolved['Species'], 'rat_SD')
+
+    def test_case_insensitive_match_must_be_unique(self):
+        """Two values differing only in case leave the folded form ambiguous."""
+        schema = SourceSchema(
+            source='demo', harvested='2026-08-04T00:00:00Z', harvested_by='test',
+            collections={'c': Collection(name='c', fields=(
+                Field(name='Isotype', values=('IgG', 'IGG')),))})
+
+        self.assertEqual(schema.validateFilters('c', {'Isotype': 'IgG'})['Isotype'],
+                         'IgG')
+        with self.assertRaises(SchemaError):
+            schema.validateFilters('c', {'Isotype': 'igg'})
+
+    def test_presence_tokens_are_not_case_folded(self):
+        """Presence-only fields take exactly their tokens; 'Defined' is rejected."""
+        with self.assertRaises(SchemaError):
+            self.schema.validateFilters('paired', {'Age': 'Defined'})
+
     def test_rejects_an_unknown_field(self):
         with self.assertRaises(SchemaError):
             self.schema.validateFilters('paired', {'Nonesuch': 'x'})

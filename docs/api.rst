@@ -10,6 +10,8 @@ API
    modules/Commandline
    modules/Http
    modules/Schema
+   modules/Contracts
+   modules/Drift
    modules/Catalog
    modules/Convert
    modules/Airrflow

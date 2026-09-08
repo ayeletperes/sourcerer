@@ -78,6 +78,25 @@ FIELD_ALIASES = {
     '#Unique Sequences': 'Unique sequences',
 }
 
+#: Every searchable field the snapshot may carry, mapped to what sourcerer does
+#: with it: the AIRR or samplesheet column it feeds, or an explicit note that it
+#: is a search filter only. A contract test asserts every field in the packaged
+#: snapshot appears here, so when OAS adds a field the monthly refresh PR fails
+#: CI with its name instead of silently ignoring it.
+KNOWN_FIELDS = {
+    'Species': 'samplesheet species',
+    'Age': 'samplesheet age',
+    'BSource': 'samplesheet tissue',
+    'BType': 'samplesheet cell_subset',
+    'Vaccine': 'samplesheet intervention',
+    'Disease': 'samplesheet disease_diagnosis',
+    'Subject': 'samplesheet subject_id',
+    'Longitudinal': 'samplesheet longitudinal',
+    'Chain': 'search filter only; locus is derived from v_call per row',
+    'Isotype': 'c_call, from unit metadata when no per chain Isotype column',
+    'Primer': 'search filter only; no output column',
+}
+
 #: Values OAS uses to mean "not recorded".
 NULL_TOKENS = frozenset(['', 'no', 'No', 'none', 'None', 'NA', 'n/a',
                          'unknown', 'undefined'])
@@ -401,6 +420,290 @@ def parseDetailPage(html):
             'layout has changed')
 
     return found
+
+
+# ---------------------------------------------------------------------------
+# Data contracts and catalog fingerprints
+# ---------------------------------------------------------------------------
+
+#: AIRR stems every data unit layout must carry for conversion to work. Declared
+#: rather than derived so a layout that loses one shows up as a contract change.
+REQUIRED_AIRR_STEMS = ('sequence', 'locus', 'v_call', 'j_call', 'junction',
+                       'sequence_alignment', 'germline_alignment')
+
+#: Columns whose presence or absence is what distinguishes the known layouts:
+#: the 158 paired csv/ units genuinely lack Redundancy, c_region and Isotype,
+#: and unpaired units carry no sequence_id at all. Recorded per probe unit as
+#: required_columns and absent_columns so a layout gaining or losing one is a
+#: visible contract change rather than a silent conversion difference.
+CONTRACT_MARKERS = ('Redundancy', 'c_region', 'Isotype', 'sequence_id',
+                    'duplicate_count')
+
+#: How many complete CSV records a contract probe must decode before it stops
+#: extending its byte range.
+PROBE_RECORDS = 2
+
+#: Cap on distinct values per key recorded in the catalog fingerprint. A key
+#: like Run is unique per unit, and enumerating fifteen thousand values would
+#: bloat the fingerprint without describing anything the drift check compares.
+MAX_FINGERPRINT_VALUES = 500
+
+
+def filenamePattern(unit_id):
+    """
+    Normalize a unit's filename to its layout pattern.
+
+    Digit runs are collapsed so that every run accession maps to the same
+    pattern. The result is descriptive bookkeeping for the snapshot, never
+    parsed back: paths stay opaque, and a novel pattern is additive drift.
+
+    Arguments:
+      unit_id (str): the opaque unit identifier.
+
+    Returns:
+      str: the pattern, e.g. 'SRR<n>_paired' or '<n>_S<n>__<n>_Paired_All'.
+    """
+    name = unit_id.rsplit('/', 1)[-1]
+    name = re.sub(r'\.csv\.gz$', '', name)
+
+    return re.sub(r'\d+', '<n>', name)
+
+
+def pathLayouts(rows):
+    """
+    Summarize the directory and filename layouts a catalog contains.
+
+    Arguments:
+      rows (list): catalog rows.
+
+    Returns:
+      dict: observed directory segments and filename patterns, each with unit
+      counts.
+    """
+    segments = {}
+    patterns = {}
+    for row in rows:
+        segment = row.get('dir_segment', '')
+        segments[segment] = segments.get(segment, 0) + 1
+        pattern = filenamePattern(row['unit_id'])
+        patterns[pattern] = patterns.get(pattern, 0) + 1
+
+    return {'observed_dir_segments': dict(sorted(segments.items())),
+            'observed_filename_patterns': dict(sorted(patterns.items()))}
+
+
+def probeComplete(raw):
+    """
+    Decide whether a ranged probe has fetched enough of a data unit.
+
+    Enough means the metadata member has decoded completely (a second member has
+    started) and the CSV member contains the header plus PROBE_RECORDS complete
+    lines. A fixed byte window would stop sufficing the moment the metadata or
+    header grew, so completeness is judged on structure rather than on size.
+
+    Arguments:
+      raw (bytes): the accumulated prefix of the remote file.
+
+    Returns:
+      bool: True once the prefix contains what parseProbeFacts needs.
+    """
+    from sourcerer.Gzip import splitMembers
+
+    members = splitMembers(raw)
+    if len(members) < 2:
+        return False
+
+    text = members[1].decode('utf-8', errors='replace')
+
+    return text.count('\n') >= 1 + PROBE_RECORDS
+
+
+def jsonTypeName(value):
+    """
+    Name a JSON value's type for the contract record.
+
+    Arguments:
+      value: a value decoded from JSON.
+
+    Returns:
+      str: one of 'null', 'bool', 'int', 'float', 'str', 'list', 'dict'.
+    """
+    if value is None:
+        return 'null'
+    # bool subclasses int, so it has to be tested first.
+    for kind, name in ((bool, 'bool'), (int, 'int'), (float, 'float'),
+                       (str, 'str'), (list, 'list'), (dict, 'dict')):
+        if isinstance(value, kind):
+            return name
+
+    return type(value).__name__
+
+
+def parseProbeFacts(raw, unit_id, collection):
+    """
+    Extract the file format facts from a probed data unit prefix.
+
+    Arguments:
+      raw (bytes): the leading bytes of the remote file.
+      unit_id (str): which unit was probed.
+      collection (str): 'paired' or 'unpaired'.
+
+    Returns:
+      dict: the contract facts for this unit's layout.
+
+    Raises:
+      OasParseError: if the prefix does not have the expected structure.
+    """
+    import io
+
+    from sourcerer.Gzip import splitMembers
+
+    members = splitMembers(raw)
+    if len(members) < 2:
+        raise OasParseError(
+            'probe of %s decoded %d gzip member(s) where 2 were expected '
+            '(metadata, then CSV); the data unit framing has changed'
+            % (unit_id, len(members)))
+
+    meta_text = members[0].decode('utf-8', errors='replace')
+    record = next(csv.reader(io.StringIO(meta_text)))
+    if len(record) != 1:
+        raise OasParseError(
+            'probe of %s: the metadata member holds %d CSV fields where 1 was '
+            'expected' % (unit_id, len(record)))
+
+    try:
+        metadata = json.loads(record[0])
+    except ValueError as error:
+        raise OasParseError(
+            'probe of %s: the metadata member is not JSON (%s)'
+            % (unit_id, error))
+
+    columns = next(csv.reader(io.StringIO(
+        members[1].decode('utf-8', errors='replace'))))
+
+    facts = {
+        'unit_id': unit_id,
+        'gzip_members': len(members),
+        'metadata_keys': sorted(metadata),
+        'metadata_value_types': {k: jsonTypeName(v) for k, v in metadata.items()},
+        'n_columns': len(columns),
+        'columns': sorted(columns),
+        'required_airr_stems': list(REQUIRED_AIRR_STEMS),
+    }
+
+    if collection == 'paired':
+        stems = {chain: set() for chain in CHAINS}
+        unsuffixed = []
+        for column in columns:
+            match = CHAIN_COLUMN.match(column)
+            if match is not None:
+                stems[match['chain']].add(match['stem'])
+            else:
+                unsuffixed.append(column)
+        shared = stems['heavy'] & stems['light']
+        facts['suffix_pairing'] = {
+            'suffixes': ['_%s' % x for x in CHAINS],
+            'unsuffixed_columns': sorted(unsuffixed),
+            'paired_stems': len(shared),
+            'unmatched_stems': sorted(stems['heavy'] ^ stems['light'])}
+        present = shared
+    else:
+        present = set(columns)
+
+    facts['required_columns'] = sorted(x for x in CONTRACT_MARKERS
+                                       if x in present)
+    facts['absent_columns'] = sorted(x for x in CONTRACT_MARKERS
+                                     if x not in present)
+
+    return facts
+
+
+def chooseProbeUnits(rows, pinned):
+    """
+    Select one probe unit per path layout, honoring existing pins.
+
+    A pinned unit still present in the catalog is kept: re-choosing every run
+    would churn the snapshot diff and untie the recorded contract from the file
+    it was measured on. A fresh unit is chosen only for a layout with no live
+    pin, preferring the smallest by sequence count so the probe stays cheap; the
+    replacement then appears in the snapshot diff, where a reviewer sees it.
+
+    Arguments:
+      rows (list): catalog rows.
+      pinned (iterable): unit_ids pinned by the existing contracts.
+
+    Returns:
+      dict: dir_segment to the chosen catalog row, in sorted segment order.
+    """
+    def size(row):
+        counts = str(row.get('n_unique_sequences') or '')
+        return (0, int(counts)) if counts.isdigit() else (1, 0)
+
+    chosen = {}
+    pins = set(pinned)
+    for row in rows:
+        segment = row.get('dir_segment', '')
+        if row['unit_id'] in pins and segment not in chosen:
+            chosen[segment] = row
+
+    groups = {}
+    for row in rows:
+        groups.setdefault(row.get('dir_segment', ''), []).append(row)
+    for segment, group in groups.items():
+        if segment not in chosen:
+            chosen[segment] = min(group, key=lambda x: (size(x), x['unit_id']))
+
+    return dict(sorted(chosen.items()))
+
+
+def buildFingerprint(content, headers, payload):
+    """
+    Condense the raw unpaired catalog into the facts the drift check compares.
+
+    key_counts is what surfaces a key present on a strict subset of units: any
+    count that is neither zero nor n_units is by definition partial, which is
+    the anomaly the drift check reports.
+
+    Arguments:
+      content (bytes): the catalog document as served.
+      headers: the response headers.
+      payload (dict): the parsed catalog.
+
+    Returns:
+      dict: the fingerprint.
+    """
+    key_counts = {}
+    value_types = {}
+    value_counts = {}
+    studies = {}
+    for key, meta in payload.items():
+        collection, unit_id = unitIdFromUrl(urlFromCatalogKey(key))
+        study = unit_id.split('/')[0]
+        studies[study] = studies.get(study, 0) + 1
+        for name, value in meta.items():
+            key_counts[name] = key_counts.get(name, 0) + 1
+            value_types.setdefault(name, set()).add(jsonTypeName(value))
+            counts = value_counts.setdefault(name, {})
+            if counts is not None:
+                counts[str(value)] = counts.get(str(value), 0) + 1
+                if len(counts) > MAX_FINGERPRINT_VALUES:
+                    value_counts[name] = None
+
+    return {
+        'sha256': hashlib.sha256(content).hexdigest(),
+        'n_units': len(payload),
+        'etag': headers.get('ETag', ''),
+        'last_modified': headers.get('Last-Modified', ''),
+        'key_counts': dict(sorted(key_counts.items())),
+        'value_types': {k: sorted(v) for k, v in sorted(value_types.items())},
+        # None marks a key with more distinct values than the fingerprint
+        # enumerates, such as per unit accessions.
+        'value_counts': {k: (dict(sorted(v.items())) if v is not None else None)
+                         for k, v in sorted(value_counts.items())},
+        'study_index': dict(sorted(studies.items())),
+        'sample_unit': {'key': min(payload), 'metadata': payload[min(payload)]},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -946,6 +1249,10 @@ class OasSource(SourceBase):
     #: unrelated cells rather than failing.
     prefix_ids = False
 
+    #: Fingerprint of the raw unpaired catalog, set as a side effect of
+    #: harvesting it, so that a refresh fingerprints the same bytes it indexed.
+    catalog_fingerprint = None
+
     def formUrl(self, collection):
         """
         Return the search form URL for a collection.
@@ -1064,10 +1371,16 @@ class OasSource(SourceBase):
         """
         Build the unpaired catalog from the published JSON index.
 
+        Also fingerprints the raw document while it is in hand, so that the
+        drift check can compare the catalog's shape without re-fetching it.
+
         Returns:
           list: catalog rows.
         """
-        payload = self.client.get(CATALOG_URL).json()
+        response = self.client.get(CATALOG_URL)
+        payload = json.loads(response.content)
+        self.catalog_fingerprint = buildFingerprint(response.content,
+                                                    response.headers, payload)
 
         rows = []
         for key, meta in payload.items():
@@ -1134,6 +1447,88 @@ class OasSource(SourceBase):
             enriched += 1
 
         return enriched
+
+    def harvestContracts(self, catalogs, existing=None):
+        """
+        Probe pinned data units and record the downloaded file format.
+
+        One unit per path layout is fetched by progressive byte ranges, decoded
+        far enough to see the metadata member and the CSV header, and reduced to
+        the facts conversion depends on. Collections not harvested this run keep
+        their existing entries, so a partial refresh cannot silently drop a
+        contract.
+
+        Arguments:
+          catalogs (dict): collection name to catalog rows.
+          existing (dict): the stored contracts, for probe unit pins.
+
+        Returns:
+          dict: the data contracts payload.
+
+        Raises:
+          ProbeIncompleteError: if a probe hit its byte cap. This is a harvest
+            failure, not drift; a slow or truncated response must not read as a
+            format change.
+          OasParseError: if a probed prefix does not have the expected shape.
+        """
+        from datetime import datetime
+
+        from sourcerer.Contracts import CONTRACTS_VERSION
+        from sourcerer.Version import __version__
+
+        collections = dict((existing or {}).get('collections') or {})
+        for collection, rows in sorted(catalogs.items()):
+            pinned = [x['unit_id'] for x in
+                      (collections.get(collection) or {}).get('probe_units', [])]
+            probes = []
+            for segment, row in chooseProbeUnits(rows, pinned).items():
+                log.info('probing %s %s unit %s', self.name, collection,
+                         row['unit_id'])
+                raw = self.client.readRanges(row['url'], probeComplete)
+                facts = parseProbeFacts(raw, row['unit_id'], collection)
+                facts['dir_segment'] = segment
+                probes.append(facts)
+            collections[collection] = {'path_layouts': pathLayouts(rows),
+                                       'probe_units': probes}
+
+        return {'schema_version': CONTRACTS_VERSION,
+                'harvested': datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'harvested_by': 'sourcerer %s' % __version__,
+                'collections': collections}
+
+    def harvestArtifacts(self, out, schema, catalogs):
+        """
+        Write the OAS specific snapshot artifacts.
+
+        Arguments:
+          out (Path): the snapshot directory being written.
+          schema (SourceSchema): the freshly harvested schema.
+          catalogs (dict): collection name to the catalog rows harvested this
+            run.
+
+        Returns:
+          dict: artifact name to (path, changed).
+        """
+        from sourcerer.Contracts import (
+            loadContracts,
+            saveContracts,
+            saveFingerprint,
+        )
+
+        # Pins come from the directory being written when it already holds
+        # contracts, otherwise from the packaged snapshot, so a refresh into a
+        # fresh --out directory still keeps the committed pins.
+        existing = loadContracts(self.name, path=out) or loadContracts(self.name)
+
+        written = {}
+        contracts = self.harvestContracts(catalogs, existing=existing)
+        written['data_contracts'] = saveContracts(contracts, out)
+
+        if self.catalog_fingerprint is not None:
+            written['catalog_fingerprint'] = saveFingerprint(
+                self.catalog_fingerprint, out)
+
+        return written
 
     def catalogPath(self, collection):
         """

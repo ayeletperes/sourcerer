@@ -68,3 +68,17 @@ from one and J from the other.
 |---|---|
 | `ogrdb_igk_ungapped.fasta` | Two IGKV and two IGKJ alleles, ungapped. J is taken from here. |
 | `ogrdb_igk_gapped.fasta` | The same alleles IMGT-gapped; the IGKV records carry `.` gaps. V is taken from here, which is what keeps its numbering. |
+
+## Stale snapshot (`schema_prev/`)
+
+Hand-written, not captured: a deliberately out-of-date snapshot for
+`test_Drift.py`. Its `schema.yaml` records the paired field list the
+predecessor tool (`OASTools.py`) hardcoded — `Species, Age, Vaccine, Disease,
+Isotype, Longitudinal` — and an unpaired collection that predates `Primer`;
+its `data_contracts.yaml` records a paired probe unit with 178 columns and no
+`sequence_id` stem. The drift check must classify the difference against the
+current packaged snapshot as **structural** on both the form axis and the
+file-format axis; that assertion is the regression test for the silent
+staleness this project exists to prevent. The pinned probe `unit_id` must
+match the one in `src/sourcerer/data/schemas/oas/data_contracts.yaml` — if the
+packaged pin is ever deliberately moved, move this fixture's with it.

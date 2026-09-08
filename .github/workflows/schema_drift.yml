@@ -1,0 +1,109 @@
+name: schema-drift
+
+# Monthly re-harvest of the OAS schema snapshot. When anything drifted, the
+# refresh leaves changed files in the working tree and a pull request is opened
+# carrying the drift report; that PR's own CI run is what says whether code
+# changes are needed (the contract tests fail on an unmapped field). On a quiet
+# month the refresh writes no tracked file at all, so there is nothing to open
+# a pull request from -- the policy is enforced by the filesystem rather than
+# by a condition. A failed harvest opens an issue instead of a PR, because a
+# truncated snapshot that merely looks like drift is worse than no PR.
+#
+# This is distinct from check-apis.yml, which probes the germline reference
+# APIs (IMGT, OGRDB) and watches without ever writing anything.
+
+on:
+  schedule:
+    - cron: "17 5 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: schema-drift
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Editable, so that `schema refresh` writes into this checkout's
+      # src/sourcerer/data rather than into site-packages, which is what lets
+      # git see the changes.
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Refresh the snapshot
+        run: |
+          # The host is verifiably flaky; three attempts, five minutes apart.
+          for attempt in 1 2 3; do
+            if sourcerer schema refresh --source oas; then
+              exit 0
+            fi
+            echo "refresh attempt ${attempt} failed" >&2
+            if [ "${attempt}" -lt 3 ]; then sleep 300; fi
+          done
+          exit 1
+      - name: Classify drift
+        id: check
+        run: |
+          sourcerer schema check --source oas --against git:HEAD \
+            --fail-on never --report drift_report.json --markdown drift_report.md
+          cat drift_report.md >> "${GITHUB_STEP_SUMMARY}"
+          echo "level=$(jq -r .overall_level drift_report.json)" >> "${GITHUB_OUTPUT}"
+      - name: Assert a quiet refresh left the tree clean
+        run: |
+          # `schema refresh` writes a tracked file only when its content
+          # changed, and the provenance stamp moves only alongside another
+          # change. If provenance.json is ever the only modification, some
+          # future change has broken that invariant and every month would
+          # open an empty pull request; fail loudly instead.
+          if [ "$(git diff --name-only | wc -l)" -eq 1 ] \
+             && git diff --name-only | grep -q 'provenance.json'; then
+            echo "refresh moved only the provenance stamp; the" \
+                 "write-only-if-changed invariant is broken" >&2
+            exit 1
+          fi
+      - name: Upload the drift report
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-report
+          path: |
+            drift_report.json
+            drift_report.md
+      # Opens a PR only when the working tree is dirty; on a quiet month the
+      # refresh changed nothing and this step is a no-op.
+      - name: Open a pull request when the snapshot changed
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
+        with:
+          branch: schema/oas-refresh
+          add-paths: src/sourcerer/data/schemas/oas
+          commit-message: Refresh the OAS schema snapshot
+          title: 'Refresh the OAS schema snapshot (drift: ${{ steps.check.outputs.level }})'
+          body-path: drift_report.md
+          labels: |
+            schema-drift
+            drift:${{ steps.check.outputs.level }}
+          delete-branch: true
+      - name: Open an issue when the harvest failed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="OAS schema refresh failed"
+          open=$(gh issue list --state open --search "in:title \"${title}\"" \
+                 --json number --jq length)
+          if [ "${open}" -eq 0 ]; then
+            gh issue create --title "${title}" \
+              --body "The scheduled schema refresh failed. See the run log: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}. A harvest failure is not drift: no pull request was opened, and the packaged snapshot is unchanged."
+          else
+            echo "an open issue already tracks this"
+          fi

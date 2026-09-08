@@ -60,26 +60,38 @@ def saveCatalog(rows, path, columns=CATALOG_COLUMNS):
     scheduled refresh would look like a change and the review workflow would stop
     meaning anything.
 
+    An unchanged catalog is left alone rather than rewritten, so a refresh that
+    finds nothing new keeps the working tree clean.
+
     Arguments:
       rows (iterable): dicts of column to value.
       path (Path): where to write.
       columns (tuple): the column order.
 
     Returns:
-      Path: the file written.
+      tuple: (Path, changed) where changed is False if the file was left alone.
     """
+    import io
+
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
 
     ordered = sorted(rows, key=lambda x: x.get('unit_id', ''))
-    with open(path, 'w', newline='') as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(columns), delimiter='\t',
-                                extrasaction='ignore', lineterminator='\n')
-        writer.writeheader()
-        for row in ordered:
-            writer.writerow({x: row.get(x, '') for x in columns})
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=list(columns), delimiter='\t',
+                            extrasaction='ignore', lineterminator='\n')
+    writer.writeheader()
+    for row in ordered:
+        writer.writerow({x: row.get(x, '') for x in columns})
+    content = buffer.getvalue()
 
-    return path
+    if path.exists() and path.read_text() == content:
+        return path, False
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w', newline='') as handle:
+        handle.write(content)
+
+    return path, True
 
 
 def mergeEnrichment(existing, fresh):

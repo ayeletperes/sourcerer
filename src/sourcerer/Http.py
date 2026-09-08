@@ -334,7 +334,11 @@ class HttpClient:
           cap (int): maximum total bytes to fetch before giving up.
 
         Returns:
-          bytes: the accumulated prefix of the remote object.
+          bytes: the accumulated prefix of the remote object, or the whole
+          object when it turned out to be smaller than the requested prefix.
+          A whole object is returned without consulting is_complete: the
+          predicate exists to decide when a *prefix* suffices, and with the
+          entire file in hand there is nothing more a longer wait could add.
 
         Raises:
           ProbeIncompleteError: if the cap was reached without is_complete
@@ -354,15 +358,12 @@ class HttpClient:
 
             body = response.content
             served_whole = response.status_code == 200
+            total = parseContentRangeTotal(response.headers.get('Content-Range'))
             response.close()
 
             if served_whole:
-                # Server ignored Range and sent everything; nothing left to ask for.
-                buffer = body
-                if is_complete(buffer):
-                    return buffer
-                raise ProbeIncompleteError(
-                    'whole body of %s did not contain the expected structure' % url)
+                # Server ignored Range and sent everything.
+                return body
 
             if not body:
                 raise ProbeIncompleteError(
@@ -370,6 +371,10 @@ class HttpClient:
                     % (url, len(buffer)))
 
             buffer += body
+            if total is not None and len(buffer) >= total:
+                # The object is smaller than the window: everything is here,
+                # and asking for another range would only earn a 416.
+                return buffer
             if is_complete(buffer):
                 return buffer
 

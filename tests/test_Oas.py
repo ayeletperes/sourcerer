@@ -395,5 +395,30 @@ class TestCatalogEnrichment(unittest.TestCase):
         self.assertEqual(len(client.urls), 1)
 
 
+class TestKnownFields(unittest.TestCase):
+    """
+    The contract between the snapshot and the code
+
+    The monthly refresh updates the snapshot mechanically; this test is what
+    turns an unmapped upstream field into a red CI run on that refresh PR.
+    When it fails, either map the new field to its AIRR or samplesheet column
+    or record an explicit decision to ignore it -- silence is the one option
+    the predecessor tool took, and it shipped a stale field list for years.
+    """
+
+    def test_every_snapshot_field_is_understood(self):
+        from sourcerer.Schema import loadSchema
+
+        schema = loadSchema('oas')
+        for name in schema.collection_names:
+            for item in schema.getCollection(name).fields:
+                self.assertIn(
+                    item.name, Oas.KNOWN_FIELDS,
+                    "Unmapped OAS field '%s' in collection '%s': add it to "
+                    'Oas.KNOWN_FIELDS with its AIRR/samplesheet mapping or an '
+                    'explicit note that it is a search filter only'
+                    % (item.name, name))
+
+
 if __name__ == '__main__':
     unittest.main()

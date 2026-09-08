@@ -197,6 +197,25 @@ class SourceBase(ABC):
           pandas.DataFrame: normalized records.
         """
 
+    def harvestArtifacts(self, out, schema, catalogs):
+        """
+        Write source specific snapshot artifacts beyond the schema and catalogs.
+
+        Called at the end of a schema refresh. The default writes nothing;
+        sources with extra contracts to pin (file format probes, catalog
+        fingerprints) override it.
+
+        Arguments:
+          out (Path): the snapshot directory being written.
+          schema (SourceSchema): the freshly harvested schema.
+          catalogs (dict): collection name to the catalog rows harvested this
+            run.
+
+        Returns:
+          dict: artifact name to (path, changed).
+        """
+        return {}
+
     def validateQuery(self, collection, filters):
         """
         Validate filters against the stored snapshot.

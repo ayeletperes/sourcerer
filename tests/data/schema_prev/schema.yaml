@@ -1,0 +1,117 @@
+# A deliberately stale snapshot: the paired field list is the literal one the
+# predecessor tool (OASTools.py) hardcoded and silently shipped after OAS had
+# moved on, and unpaired predates the Primer field. test_Drift.py asserts the
+# drift check classifies the difference against the current packaged snapshot
+# as structural on the form axis -- the exact real-world regression this
+# project exists to catch.
+collections:
+  paired:
+    fields:
+    - name: Species
+      pseudo_values: false
+      values:
+      - human
+      - rat_SD
+      wildcard: '*'
+    - name: Age
+      pseudo_values: true
+      values: []
+      wildcard: '*'
+    - name: Vaccine
+      pseudo_values: false
+      values:
+      - None
+      wildcard: '*'
+    - name: Disease
+      pseudo_values: false
+      values:
+      - None
+      - SARS-COV-2
+      wildcard: '*'
+    - name: Isotype
+      pseudo_values: false
+      values:
+      - IGHG
+      wildcard: '*'
+    - name: Longitudinal
+      pseudo_values: true
+      values: []
+      wildcard: '*'
+    reported_totals: {}
+  unpaired:
+    fields:
+    - name: Species
+      pseudo_values: false
+      values:
+      - human
+      - mouse
+      wildcard: '*'
+    - name: BSource
+      pseudo_values: false
+      values:
+      - PBMC
+      wildcard: '*'
+    - name: BType
+      pseudo_values: false
+      values:
+      - Naive-B-Cells
+      wildcard: '*'
+    - name: Longitudinal
+      pseudo_values: false
+      values:
+      - 'no'
+      wildcard: '*'
+    - name: Age
+      pseudo_values: false
+      values:
+      - '22'
+      wildcard: '*'
+    - name: Disease
+      pseudo_values: false
+      values:
+      - None
+      wildcard: '*'
+    - name: Subject
+      pseudo_values: false
+      values:
+      - no
+      wildcard: '*'
+    - name: Vaccine
+      pseudo_values: false
+      values:
+      - None
+      wildcard: '*'
+    - name: Chain
+      pseudo_values: false
+      values:
+      - Heavy
+      - Light
+      wildcard: '*'
+    - name: Isotype
+      pseudo_values: false
+      values:
+      - Bulk
+      - IGHG
+      wildcard: '*'
+    reported_totals: {}
+field_aliases:
+  '#Unique Sequences': Unique sequences
+  DS Name: Study
+  Individual: Subject
+  Organism: Species
+harvested: '2025-11-01T00:00:00Z'
+harvested_by: sourcerer 0.0.0
+parse_contracts:
+  count_regex: yielded\s*<b>([\d,]+)</b>\s*filtered sequences from\s*<b>([\d,]+)</b>\s*studies
+  csv_array_marker: 'var CSV = ['
+  detail_link_pattern: \.\./dataunit_(paired|unpaired)\?unit=
+schema_version: 1
+source: oas
+source_urls:
+  catalog: https://opig.stats.ox.ac.uk/webapps/ngsdb/oas_metadata_map.json
+  download_base: https://opig.stats.ox.ac.uk/webapps/ngsdb/
+  paired_form: https://opig.stats.ox.ac.uk/webapps/oas/oas_paired/
+  unpaired_form: https://opig.stats.ox.ac.uk/webapps/oas/oas_unpaired/
+url_rules:
+  catalog_key_prefix: /vols/naga-datasets/oas/
+  download_prefix: https://opig.stats.ox.ac.uk/webapps/ngsdb/

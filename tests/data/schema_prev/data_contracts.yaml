@@ -1,0 +1,40 @@
+# A deliberately stale data contract: the pinned paired probe unit is recorded
+# with 178 columns and no sequence_id stem, the file-format assumption the
+# predecessor tool would have carried. test_Drift.py asserts the difference
+# against the current packaged contracts classifies as structural on the
+# file-format axis, and that the csv_paired directory layout -- absent here --
+# registers as additive, because paths are opaque.
+#
+# The pinned unit_id below must match the one pinned in
+# src/sourcerer/data/schemas/oas/data_contracts.yaml: the fact comparison only
+# applies to the same unit, so if the packaged pin is ever deliberately moved,
+# this fixture moves with it.
+collections:
+  paired:
+    path_layouts:
+      observed_dir_segments:
+        csv: 158
+      observed_filename_patterns:
+        SRR<n>_paired: 158
+    probe_units:
+    - unit_id: Eccles_2020/csv/SRR10358524_paired.csv.gz
+      dir_segment: csv
+      gzip_members: 2
+      n_columns: 178
+      required_columns: []
+      absent_columns:
+      - Isotype
+      - Redundancy
+      - c_region
+      - duplicate_count
+      - sequence_id
+      suffix_pairing:
+        paired_stems: 89
+        suffixes:
+        - _heavy
+        - _light
+        unmatched_stems: []
+        unsuffixed_columns: []
+harvested: '2025-11-01T00:00:00Z'
+harvested_by: sourcerer 0.0.0
+schema_version: 1

@@ -33,25 +33,42 @@ def decompressPrefix(data):
     Returns:
       bytes: everything that could be decoded.
     """
-    out = bytearray()
+    return b''.join(splitMembers(data))
+
+
+def splitMembers(data):
+    """
+    Decode a gzip prefix into one bytes object per member started.
+
+    The member structure is itself part of the file format contract: OAS writes
+    the JSON metadata as its own member followed by the CSV as a second one, and
+    a change in that framing would break any reader that decodes raw bytes. The
+    final member is expected to be truncated when the input is a ranged prefix.
+
+    Arguments:
+      data (bytes): the leading bytes of a gzip stream.
+
+    Returns:
+      list: decoded bytes, one entry per member started, in stream order.
+    """
+    members = []
     rest = data
 
     while rest:
         decoder = zlib.decompressobj(GZIP_WBITS)
         try:
-            out += decoder.decompress(rest)
+            decoded = decoder.decompress(rest)
         except zlib.error:
-            # A member that cannot be started at all; keep what we already have.
+            # Bytes that do not begin a member; nothing more can be decoded.
             break
 
+        members.append(decoded)
         if not decoder.eof:
-            # The stream ran out inside this member, which is the expected end
-            # state for a ranged prefix.
             break
 
         rest = decoder.unused_data
 
-    return bytes(out)
+    return members
 
 
 def countCompleteLines(data, encoding='utf-8'):

@@ -35,8 +35,8 @@ log = logging.getLogger(__name__)
 SAMPLESHEET_COLUMNS = ('sample_id', 'filename', 'subject_id', 'species',
                        'pcr_target_locus', 'tissue', 'sex', 'age',
                        'biomaterial_provider', 'single_cell', 'intervention',
-                       'disease_diagnosis', 'cell_subset', 'study',
-                       'sample_name')
+                       'disease_diagnosis', 'longitudinal', 'cell_subset',
+                       'study', 'sample_name')
 
 #: Loci that map to each airrflow pcr_target_locus value.
 IG_LOCI = frozenset(['IGH', 'IGK', 'IGL'])
@@ -297,6 +297,10 @@ def buildSamplesheet(entries, out, collection, root=None, loci=None):
             'single_cell': 'TRUE' if collection == 'paired' else 'FALSE',
             'disease_diagnosis': clean(metadata.get('Disease')),
             'intervention': clean(metadata.get('Vaccine')),
+            # Like Age, OAS records this as a presence flag ("no" when the
+            # study carries no longitudinal design), so the same null-token
+            # collapse to 'NA' applies, unlike Subject's raw pass-through.
+            'longitudinal': clean(metadata.get('Longitudinal'), 'NA'),
             'cell_subset': clean(metadata.get('BType')),
             'study': clean(metadata.get('study')) or unit.study,
             'sample_name': unit.unit_id,

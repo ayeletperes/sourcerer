@@ -224,6 +224,26 @@ class TestSamplesheetMerge(unittest.TestCase):
         rows = readRows(self.sheet)
         self.assertEqual(rows[0]['subject_id'], 'Corinaldesi_2024')
 
+    def test_longitudinal_is_carried_through(self):
+        """A real Longitudinal value from OAS reaches its own column."""
+        self.write([makeUnit('A_2020/csv/a.csv.gz', Longitudinal='yes')])
+
+        rows = readRows(self.sheet)
+        self.assertEqual(rows[0]['longitudinal'], 'yes')
+
+    def test_longitudinal_absent_or_no_becomes_na(self):
+        """
+        Like Age, Longitudinal is a presence flag: "no" and absent both mean
+        the design carries no longitudinal information, so both collapse to
+        the same 'NA' placeholder airrflow expects.
+        """
+        self.write([makeUnit('A_2020/csv/a.csv.gz', Longitudinal='no'),
+                   makeUnit('B_2020/csv/b.csv.gz')])
+
+        rows = readRows(self.sheet)
+        self.assertEqual(rows[0]['longitudinal'], 'NA')
+        self.assertEqual(rows[1]['longitudinal'], 'NA')
+
 
 if __name__ == '__main__':
     unittest.main()

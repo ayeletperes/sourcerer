@@ -85,8 +85,12 @@ POOLED_RE = re.compile(r'\b(hash(?:ed)?|pool(?:ed)?|multiplex(?:ed)?)\b',
 #: way a person would write it rather than the way POOLED_RE expects. Matched
 #: and counted separately from POOLED_RE/its parenthesized list because
 #: neither the keyword nor the punctuation this pattern needs is present.
+#: Semicolons are recognized alongside commas because they are what OAS's own
+#: Subject metadata uses for the same list, e.g. 'donor 21; 22; 23 and 24' --
+#: this pattern also runs directly over that field, in
+#: `sourcerer oas verify`'s subject_check, not only over NCBI text.
 DONOR_LIST_RE = re.compile(
-    r'\bdonors?\s+([\w-]+(?:\s*,\s*[\w-]+)*(?:\s*,?\s*(?:and|&)\s+[\w-]+)?)',
+    r'\bdonors?\s+([\w-]+(?:\s*[,;]\s*[\w-]+)*(?:\s*[,;]?\s*(?:and|&)\s+[\w-]+)?)',
     re.IGNORECASE)
 
 #: Trailing tokens generic enough, across studies, to be safe to strip when
@@ -185,7 +189,11 @@ def poolCodes(text):
     Arguments:
       text (str): a BioSample sample name or SRA title, e.g.
         'Hashed scBCR sample (FA007, FA048)' or
-        'BCR-Seq, BNT/BNT d7, donor 31, 32 and 33'.
+        'BCR-Seq, BNT/BNT d7, donor 31, 32 and 33'. Also run directly over
+        OAS's own Subject field by `sourcerer oas verify`'s subject_check,
+        whose donor lists are semicolon separated, e.g.
+        'donor 21; 22; 23 and 24' -- both separators are recognized
+        throughout this function for that reason.
 
     Returns:
       tuple: the codes found, e.g. ('FA007', 'FA048'); empty if the text does
@@ -196,7 +204,7 @@ def poolCodes(text):
     donor_match = DONOR_LIST_RE.search(text)
     if donor_match:
         codes = tuple(code for code in
-                      re.split(r'\s*(?:,|\band\b|&)\s*', donor_match.group(1).strip())
+                      re.split(r'\s*(?:[,;]|\band\b|&)\s*', donor_match.group(1).strip())
                       if code)
         if len(codes) > 1:
             return codes
@@ -208,7 +216,8 @@ def poolCodes(text):
     if not match:
         return ()
 
-    codes = tuple(code.strip() for code in match.group(1).split(',') if code.strip())
+    codes = tuple(code.strip() for code in re.split(r'[,;]', match.group(1))
+                 if code.strip())
     return codes if len(codes) > 1 else ()
 
 

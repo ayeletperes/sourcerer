@@ -161,6 +161,21 @@ class TestPoolCodes(unittest.TestCase):
         """'donor 31' alone names one subject, not a pool."""
         self.assertEqual(poolCodes('BCR-Seq from a single donor 31'), ())
 
+    def test_semicolon_separated_donor_list(self):
+        """
+        OAS's own Subject field uses semicolons rather than commas for the
+        same list shape, e.g. 'donor 21; 22; 23 and 24' -- both separators
+        must read as the same construct, since subject_check runs poolCodes
+        directly over that field, not only over NCBI text.
+        """
+        self.assertEqual(poolCodes('donor 21; 22; 23 and 24'),
+                         ('21', '22', '23', '24'))
+
+    def test_semicolon_separated_parenthesized_list(self):
+        """A semicolon separated parenthesized list is also read as pooled."""
+        self.assertEqual(poolCodes('Hashed scBCR sample (FA007; FA048)'),
+                         ('FA007', 'FA048'))
+
 
 class TestSuggestSubject(unittest.TestCase):
     """

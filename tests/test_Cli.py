@@ -320,17 +320,70 @@ class TestHandleOasVerify(unittest.TestCase):
         with open(path, newline='') as handle:
             return list(csv.DictReader(handle, delimiter='\t'))
 
-    def test_a_real_subject_id_is_never_looked_up(self):
+    def test_a_real_subject_id_is_looked_up_too_and_compared(self):
         """
-        A row that already has a subject does not touch the network at all.
+        A row that already has a subject_id is still cross-referenced.
 
-        HttpClient is patched to a client whose session raises on any call,
-        so a lookup attempt would fail loudly rather than silently succeed --
-        the row still appearing correctly in the report is the assertion.
+        OAS recording a subject is not proof it is correct -- a typo, a
+        short code reused across studies, or a pooled run naming several
+        donors under one value are all real failure modes -- so verify
+        looks the accession up regardless, and biosample_id always carries
+        NCBI's own text rather than a copy of subject_id. Here NCBI's
+        BL-110_VDJ has nothing in common with 'Donor-2', so subject_check
+        reports 'differs'.
         """
         self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
                                'subject_id': 'Donor-2', 'species': 'human',
                                'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
+
+        self.assertEqual(self.runVerify(), 0)
+
+        rows = self.readReport()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'ok')
+        self.assertEqual(rows[0]['biosample_id'], 'BL-110_VDJ')
+        self.assertEqual(rows[0]['biosample_id_suggested'], 'BL-110')
+        self.assertEqual(rows[0]['subject_check'], 'differs')
+
+    def test_a_real_subject_id_that_matches_ncbi_agrees(self):
+        """subject_check reports 'agrees' when subject_id is NCBI's own text."""
+        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
+                               'subject_id': 'BL-110', 'species': 'human',
+                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
+
+        self.assertEqual(self.runVerify(), 0)
+
+        rows = self.readReport()
+        self.assertEqual(rows[0]['subject_check'], 'agrees')
+
+    def test_a_pooled_subject_id_is_never_looked_up_as_a_single_subject(self):
+        """
+        OAS's own Subject field can itself name a pool of donors.
+
+        'donor 21; 22; 23 and 24' is exactly the shape OAS's paired catalog
+        uses for a 10x hashed/pooled run; subject_check must recognize this
+        from subject_id alone, the same way it recognizes NCBI's own pooled
+        text, rather than reporting a false 'differs'.
+        """
+        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
+                               'subject_id': 'donor 21; 22; 23 and 24',
+                               'species': 'human',
+                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
+
+        self.assertEqual(self.runVerify(), 0)
+
+        rows = self.readReport()
+        self.assertEqual(rows[0]['subject_check'], 'pooled')
+
+    def test_no_accession_leaves_subject_check_unresolved_only_when_null(self):
+        """
+        A row whose sample_name carries no accession, but does have a real
+        subject_id, is neither 'unresolved' (that's for a null subject_id)
+        nor comparable -- it is 'unverified'.
+        """
+        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
+                               'subject_id': 'Donor-2', 'species': 'human',
+                               'sample_name': 'not-an-accession'}])
 
         empty_client = HttpClient(delay=0, backoff=0, session=FakeSession(
             lambda *a: (_ for _ in ()).throw(AssertionError('no network call was expected'))))
@@ -339,10 +392,9 @@ class TestHandleOasVerify(unittest.TestCase):
             self.assertEqual(handleOasVerify(args), 0)
 
         rows = self.readReport()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['status'], 'passthrough')
-        self.assertEqual(rows[0]['biosample_id'], 'Donor-2')
-        self.assertEqual(rows[0]['biosample_id_suggested'], 'Donor-2')
+        self.assertEqual(rows[0]['status'], 'no_accession')
+        self.assertEqual(rows[0]['subject_check'], 'unverified')
+        self.assertEqual(rows[0]['biosample_id'], '')
 
     def test_resolved_row_gets_both_a_raw_and_a_suggested_biosample_id(self):
         """
@@ -361,6 +413,7 @@ class TestHandleOasVerify(unittest.TestCase):
         self.assertEqual(rows[0]['biosample_accession'], 'SAMN1')
         self.assertEqual(rows[0]['biosample_id'], 'BL-110_VDJ')
         self.assertEqual(rows[0]['biosample_id_suggested'], 'BL-110')
+        self.assertEqual(rows[0]['subject_check'], 'unresolved')
         self.assertIn('SAMN1', rows[0]['biosample_url'])
 
     def test_report_carries_every_input_column(self):
@@ -428,6 +481,34 @@ class TestHandleOasVerify(unittest.TestCase):
             handleOasVerify(args)
         self.assertIn('subject_id', str(raised.exception))
         self.assertIn('sample_name', str(raised.exception))
+
+    def test_same_subject_id_in_two_studies_is_warned_about(self):
+        """
+        A short subject_id reused across studies is a real collision.
+
+        airrflow keys a subject on subject_id alone, so two studies sharing
+        'Donor-2' would otherwise merge silently; this is worth a log
+        warning independent of subject_check, which only compares each row
+        against NCBI and cannot see across rows.
+        """
+        columns = list(VERIFY_COLUMNS) + ['study']
+        with open(self.samplesheet, 'w', newline='') as handle:
+            writer = csv.DictWriter(handle, fieldnames=columns, delimiter='\t',
+                                    lineterminator='\n')
+            writer.writeheader()
+            writer.writerow({'sample_id': 'ssr_1', 'filename': 'a.tsv',
+                             'subject_id': 'Donor-2', 'species': 'human',
+                             'sample_name': 'StudyA/x.csv.gz', 'study': 'StudyA'})
+            writer.writerow({'sample_id': 'ssr_2', 'filename': 'b.tsv',
+                             'subject_id': 'Donor-2', 'species': 'human',
+                             'sample_name': 'StudyB/y.csv.gz', 'study': 'StudyB'})
+
+        with self.assertLogs('sourcerer', level='WARNING') as logs:
+            self.assertEqual(self.runVerify(), 0)
+
+        self.assertTrue(any('Donor-2' in message for message in logs.output))
+        self.assertTrue(any('StudyA' in message and 'StudyB' in message
+                            for message in logs.output))
 
 
 if __name__ == '__main__':

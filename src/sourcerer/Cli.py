@@ -350,25 +350,33 @@ def _addOasVerifyAction(actions):
     verify = actions.add_parser(
         'verify', help='cross-reference unresolved subjects against NCBI',
         description='Write an evidence report with one row per samplesheet '
-                    'row, every input column carried through unchanged, plus '
-                    'subject_id copied through unchanged for a row that '
-                    'already had one, or NCBI\'s BioSample record for a row '
-                    'OAS left unresolved (subject_id \'no\' or \'None\'), '
-                    'looked up from the run/sample accession in its '
-                    'sample_name column. biosample_id carries NCBI\'s raw '
-                    'sample name -- never guessed at further, since some '
-                    'studies\' names need study-specific reading to turn '
-                    'into a subject id (see the module docstring in '
-                    'Ncbi.py); biosample_id_suggested carries the same value '
-                    'with the handful of generic patterns (a trailing locus '
-                    'or visit suffix) stripped, the ones safe to normalize '
-                    'regardless of study. A pooled/multi-donor run (10x cell '
-                    'hashing, e.g.) gets an AMBIGUOUS_POOLED marker naming '
-                    'the donor codes in both columns instead of a guessed '
-                    'single subject. Because every input column survives, '
-                    'the report can be pointed at directly as airrflow '
-                    '--input once subject_id (still passed through raw) is '
-                    'filled in for any row that needs it.',
+                    'row, every input column carried through unchanged. '
+                    'Every row whose sample_name yields a run/sample '
+                    'accession (SRR/ERR/DRR/GSM) is looked up against NCBI, '
+                    'whether or not OAS itself recorded a subject_id -- an '
+                    'OAS-recorded subject can still be wrong (a typo, a '
+                    'short code reused across studies, or a pooled/hashed '
+                    'run naming several donors under one value), and '
+                    'NCBI\'s own record is independent evidence either way. '
+                    'biosample_id carries NCBI\'s raw sample name -- never '
+                    'guessed at further, since some studies\' names need '
+                    'study-specific reading to turn into a subject id (see '
+                    'the module docstring in Ncbi.py); biosample_id_suggested '
+                    'carries the same value with the handful of generic '
+                    'patterns (a trailing locus or visit suffix) stripped, '
+                    'the ones safe to normalize regardless of study. '
+                    'subject_check reports how that compares to the '
+                    'samplesheet\'s own subject_id: \'unresolved\' when OAS '
+                    'recorded none, \'pooled\' when either side names more '
+                    'than one donor, \'agrees\' or \'differs\' otherwise, or '
+                    '\'unverified\' when NCBI itself could not resolve the '
+                    'accession. A pooled/multi-donor run gets an '
+                    'AMBIGUOUS_POOLED marker naming the donor codes in both '
+                    'biosample_id columns instead of a guessed single '
+                    'subject. Because every input column survives, the '
+                    'report can be pointed at directly as airrflow --input '
+                    'once subject_id is filled in or corrected for any row '
+                    'that needs it.',
         formatter_class=CommonHelpFormatter)
     verify.add_argument('samplesheet', type=Path,
                         help='an airrflow samplesheet to read; only needs '
@@ -673,8 +681,8 @@ def handleDownload(args):
 #: place as airrflow input, rather than a separate file missing the columns
 #: airrflow actually reads (`filename`, `species`, `pcr_target_locus`, ...).
 NCBI_EVIDENCE_COLUMNS = ('biosample_id', 'biosample_id_suggested', 'status',
-                         'accession', 'biosample_accession', 'biosample_url',
-                         'pooled_codes')
+                         'subject_check', 'accession', 'biosample_accession',
+                         'biosample_url', 'pooled_codes')
 
 
 def readSamplesheetRows(path):
@@ -707,39 +715,86 @@ def readSamplesheetRows(path):
         return list(fields), [dict(row) for row in reader]
 
 
+def normalizeForCompare(text):
+    """
+    Reduce text to bare alphanumerics for a formatting-insensitive comparison.
+
+    Arguments:
+      text (str): the text to normalize.
+
+    Returns:
+      str: lowercased, with everything but letters and digits stripped.
+    """
+    return ''.join(c for c in str(text or '').lower() if c.isalnum())
+
+
+def subjectCheck(subject_id, found):
+    """
+    Compare a samplesheet's own subject_id against NCBI's evidence for it.
+
+    Run unconditionally, even when subject_id already looks real: OAS's own
+    value can still be wrong -- a typo, a short code reused across studies
+    (see buildEvidenceRow's caller), or a pooled/hashed run that names
+    several donors under one value (Ncbi.poolCodes is applied to subject_id
+    itself here, not only to NCBI's text, because OAS's own Subject field
+    uses the same semicolon-separated donor lists).
+
+    Arguments:
+      subject_id (str): the samplesheet row's own subject_id.
+      found (Ncbi.Evidence): the NCBI lookup for this row's accession, or
+        None if no accession could be read from sample_name.
+
+    Returns:
+      str: 'unresolved' if OAS recorded no subject at all, 'pooled' if
+        either side names more than one donor, 'unverified' if NCBI could
+        not resolve the accession (so there is nothing to compare against),
+        otherwise 'agrees' or 'differs'.
+    """
+    if isNull(subject_id):
+        return 'unresolved'
+
+    from sourcerer.Ncbi import poolCodes
+    if poolCodes(subject_id) or (found is not None and found.status == 'pooled'):
+        return 'pooled'
+
+    if found is None or found.status != 'ok':
+        return 'unverified'
+
+    ncbi_text = normalizeForCompare(found.sample_name)
+    oas_text = normalizeForCompare(subject_id)
+    if oas_text and ncbi_text and (oas_text in ncbi_text or ncbi_text in oas_text):
+        return 'agrees'
+
+    return 'differs'
+
+
 def buildEvidenceRow(row, found):
     """
     Build one row of the verify evidence report.
 
     Every column already on `row` passes through verbatim -- this only adds
     NCBI_EVIDENCE_COLUMNS, it never edits or drops what was already on the
-    samplesheet. A row that already has a real subject_id is a straight
-    passthrough for those too: there is nothing to look up, and 'use that
-    one' -- the whole reason biosample_id exists -- means biosample_id and
-    biosample_id_suggested both simply are it. A pooled/multi-donor run gets
-    the same AMBIGUOUS_POOLED marker in both columns, since there is no
-    single subject to suggest either. Anything else takes biosample_id from
-    NCBI's raw sample name and biosample_id_suggested from the
-    generic-heuristic strip of it (see Ncbi.suggestSubject) -- both always
-    written, so joining this report back onto a samplesheet never needs a
-    flag to decide which one it gets.
+    samplesheet. biosample_id and biosample_id_suggested always come from
+    NCBI, never from the samplesheet's own subject_id: a real-looking
+    subject_id is not proof it is correct, which is exactly what
+    subject_check is for. A pooled/multi-donor run gets an AMBIGUOUS_POOLED
+    marker in both columns, since there is no single subject to suggest.
+    Anything else takes biosample_id from NCBI's raw sample name and
+    biosample_id_suggested from the generic-heuristic strip of it (see
+    Ncbi.suggestSubject) -- both always written, so joining this report back
+    onto a samplesheet never needs a flag to decide which one it gets.
 
     Arguments:
       row (dict): the samplesheet row.
       found (Ncbi.Evidence): the NCBI lookup for this row's accession, or
-        None if subject_id was already real (no lookup was attempted) or no
-        accession could be read from sample_name.
+        None if no accession could be read from sample_name.
 
     Returns:
       dict: row, plus NCBI_EVIDENCE_COLUMNS.
     """
     subject_id = row.get('subject_id', '')
 
-    if not isNull(subject_id):
-        evidence = {'biosample_id': subject_id, 'biosample_id_suggested': subject_id,
-                   'status': 'passthrough', 'accession': '', 'biosample_accession': '',
-                   'biosample_url': '', 'pooled_codes': ''}
-    elif found is None:
+    if found is None:
         evidence = {'biosample_id': '', 'biosample_id_suggested': '',
                    'status': 'no_accession', 'accession': '', 'biosample_accession': '',
                    'biosample_url': '', 'pooled_codes': ''}
@@ -758,16 +813,50 @@ def buildEvidenceRow(row, found):
                    'biosample_accession': found.biosample_accession,
                    'biosample_url': found.url, 'pooled_codes': pooled_codes}
 
+    evidence['subject_check'] = subjectCheck(subject_id, found)
+
     return {**row, **evidence}
 
 
-def handleOasVerify(args):
-    """Cross-reference a samplesheet's unresolved subjects against NCBI."""
-    fields, rows = readSamplesheetRows(args.samplesheet)
-    pending = [row for row in rows if isNull(row.get('subject_id'))]
+def warnReusedSubjects(rows):
+    """
+    Log a warning when the same subject_id is used by more than one study.
 
+    airrflow keys a subject on subject_id alone, so two different studies
+    reusing the same short code (e.g. 'Donor-2') silently merges two
+    unrelated people into one subject downstream. This is exactly the kind
+    of collision a row-by-row read of subject_check is unlikely to catch,
+    since each individual row looks unremarkable on its own.
+
+    Arguments:
+      rows (list): samplesheet rows; only those carrying both subject_id and
+        study are considered.
+    """
+    studies_by_subject = {}
+    for row in rows:
+        subject = row.get('subject_id', '')
+        study = row.get('study', '')
+        if isNull(subject) or not study:
+            continue
+        studies_by_subject.setdefault(subject, set()).add(study)
+
+    for subject, studies in sorted(studies_by_subject.items()):
+        if len(studies) > 1:
+            log.warning("subject_id '%s' is used by %d different studies: %s",
+                       subject, len(studies), ', '.join(sorted(studies)))
+
+
+def handleOasVerify(args):
+    """Cross-reference every samplesheet row's subject against NCBI."""
+    fields, rows = readSamplesheetRows(args.samplesheet)
+    warnReusedSubjects(rows)
+
+    # Every row with a readable accession is looked up, not only rows OAS
+    # left unresolved: a subject_id OAS did record is still worth checking
+    # against NCBI's own record (see subjectCheck), so there is no 'pending'
+    # subset here to restrict the lookup to.
     accession_by_sample = {}
-    for row in pending:
+    for row in rows:
         accession = Ncbi.accessionFromText(row.get('sample_name', ''))
         if accession is not None:
             accession_by_sample[row['sample_id']] = accession

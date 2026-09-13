@@ -9,10 +9,14 @@ receptors against it.
 [IEDB](https://www.iedb.org/) (`Iedb.py`) publishes BCR (antibody) receptor
 sequences as a single table, `bcr`, inside a shared bulk ZIP export.
 
-`bcr` downloads as a schema-validated AIRR rearrangement TSV, with a
-`.validation.txt` report next to it. One row per chain, linked by `cell_id`,
-so a paired receptor becomes two rows; where IEDB records both a curated
-(expert reviewed) and a calculated value, the curated one wins.
+`bcr` downloads as a  schema-validated AIRR rearrangement TSV (plus a
+`.validation.txt` report next to it).
+The bulk export writes one file row per receptor, both chains side by side
+under a two-row header (a category row over a field name row); each row
+becomes one rearrangement record per chain it actually carries (one for a
+single-chain submission, two for a paired one), linked by `cell_id`. Curated
+values (expert reviewed) are preferred over calculated ones where IEDB
+records both.
 
 ```bash
 # download and convert
@@ -32,64 +36,75 @@ which reference rows it matches. One flag picks the criterion:
 | --- | --- | --- |
 | `--exact` (default) | byte-identical, CompAIRR-backed, optional V/J-gene gate | one |
 | `--fuzzy N` | exact V+J gene, up to N substitutions | one or more, pooled |
-| `--identity PCT` | same as `--fuzzy`, tolerance as percent identity rather than a count | one or more, pooled |
+| `--identity PCT` | same as `--fuzzy`, tolerance expressed as percent identity instead of a count | one or more, pooled |
 | `--levenshtein N` | exact V+J gene, up to N substitutions/insertions/deletions | exactly one |
 | `--paired` | exact V-gene, J-gene and CDR3 on *both* chains of the same reference antibody | fixed (`cdr3_aa`) |
 
-The three fuzzy modes are pure Python, always gate on exact V-gene and
-J-gene agreement, and are always restricted to the heavy chain (`--locus`
-may only be unset or `IGH`) -- their cost grows with the candidate pool,
-unlike `--exact`'s hashed CompAIRR lookup. `--levenshtein` takes a single
-`--compare-cols` column, since edit distance doesn't pool across columns the
-way Hamming distance does.
+`--fuzzy`, `--identity` and `--levenshtein` are pure Python, always gate on
+exact V-gene and J-gene agreement, and are always restricted to the heavy
+chain -- `--locus` may only be left unset or set to `IGH` under any of them.
+None of that is optional, since their cost grows with the candidate pool
+(unlike `--exact`'s hashed CompAIRR lookup) and limiting to one chain keeps
+it bounded. `--levenshtein` is the odd one out among the three: it tolerates
+insertions/deletions, not just substitutions, and for that reason only ever
+takes a single `--compare-cols` column -- edit distance doesn't pool across
+columns the way Hamming distance does.
 
 `--exact` runs through [CompAIRR](https://github.com/uio-bmi/compairr),
-built from source and put on `PATH` (or pointed at with `--compairr-bin`).
-CompAIRR has no `X` wildcard and errors on a blank sequence, so those rows
-are compared in Python instead, where `X` matches anything.
+which has to be built from source and put on `PATH` (or pointed at with
+`--compairr-bin`). CompAIRR has no concept of the `X` wildcard for an
+unresolved residue and errors on a blank sequence, so such rows are compared
+in Python instead, where `X` matches anything.
 
-Heavy and light are separate rows, so `--exact` matches them as two calls
-via `--locus`; the fuzzy modes filter to `IGH` themselves.
+`bcr.tsv` is one row per chain, not per antibody: `--exact` matches heavy
+and light as two separate calls via `--locus`; the pure-Python modes filter
+to `IGH` on their own.
 
 ```bash
-# VDJ exact match, heavy chain
+# VDJ exact match (heavy chain only -- "VDJ" implies the D segment, which
+# only the heavy chain rearranges; light chain is V+J alone)
 sourcerer annotate --query mine.tsv --reference tmp/specificity/bcr.tsv \
     --compare-cols sequence_aa --locus IGH -o annotated_heavy.tsv
 
-# same for the light chain (IGK for kappa, IGL for lambda)
+# exact, full light chain (IGK for kappa, IGL for lambda)
 sourcerer annotate --query mine.tsv --reference tmp/specificity/bcr.tsv \
     --compare-cols sequence_aa --locus IGK -o annotated_light.tsv
 
-# V+J gene match, CDR3 85% amino acid identity (Hamming)
+# V+J gene match, CDR3 85% amino acid identity (Hamming distance) -- heavy
+# chain only, gene gating and locus restriction both automatic under --fuzzy
 sourcerer annotate --query mine.tsv --reference tmp/specificity/bcr.tsv \
     --compare-cols cdr3_aa --identity 85 -o annotated.tsv
 
-# up to 2 substitutions on CDR3
+# up to 2 substitutions on CDR3 -- --locus IGH is implicit and could be left out
 sourcerer annotate --query mine.tsv --reference tmp/specificity/bcr.tsv \
     --compare-cols cdr3_aa --fuzzy 2 -o annotated.tsv
 
-# pooled across CDR1 and CDR3 (one shared tolerance, not one each)
+# substitutions pooled across CDR1 and CDR3 together (one shared tolerance,
+# not one each)
 sourcerer annotate --query mine.tsv --reference tmp/specificity/bcr.tsv \
     --compare-cols cdr1_aa --compare-cols cdr3_aa --fuzzy 3 -o annotated.tsv
 
-# up to 2 edits on CDR3, tolerating a length difference --fuzzy cannot
+# up to 2 edits (substitutions/insertions/deletions) on CDR3 -- tolerates a
+# query and reference CDR3 of different lengths, which --fuzzy cannot at all
 sourcerer annotate --query mine.tsv --reference tmp/specificity/bcr.tsv \
     --compare-cols cdr3_aa --levenshtein 2 -o annotated.tsv
 ```
 
 Every query row comes back with `n_hits_total`, `is_unique_hit` and
-`hit_ids`. The fuzzy modes add `min_mismatches` (edit distance for
+`hit_ids`. The three fuzzy modes add `min_mismatches` (edit distance for
 `--levenshtein`, substitution count otherwise); `--fuzzy`/`--identity` also
 add `mismatch_positions`, which `--levenshtein` can't produce since an indel
 shifts every position after it. BLOSUM is not implemented.
 
 ### Paired heavy+light exact match
 
-`--paired` is stricter than the per-row modes: an antibody matches only if
-the *same* reference antibody agrees on V-gene, J-gene and CDR3 for both its
-heavy and its light chain -- a heavy hit on one reference antibody and an
-unrelated light hit on another doesn't count. `--compare-cols` and `--locus`
-don't apply; the columns are fixed by that definition.
+`--exact`/`--fuzzy` treat each chain row on its own. `--paired` is stricter:
+an antibody counts as a match only if the *same* reference antibody agrees
+on V-gene, J-gene and CDR3 for both its heavy and its light chain -- a heavy
+hit on one reference antibody and an unrelated light hit on another doesn't
+count. `--compare-cols` and `--locus` don't apply here; the columns
+(`cdr3_aa`, `v_call`, `j_call`, `cell_id`, `locus`) are fixed by that
+definition.
 
 ```bash
 sourcerer annotate --query mine.tsv --reference tmp/specificity/bcr.tsv \

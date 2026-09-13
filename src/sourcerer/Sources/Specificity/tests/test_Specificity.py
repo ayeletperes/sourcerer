@@ -17,12 +17,55 @@ import pandas
 
 # Sourcerer imports
 from sourcerer.Sources.Specificity import REGISTRY, getSpecificitySource
-from sourcerer.Sources.Specificity.Iedb import API_BASE, BULK_URL, IedbSource
+from sourcerer.Sources.Specificity.Iedb import (_CHAIN_DIRECT, _CHAIN_EXTRA,
+                                                _CHAIN_PREFERRED,
+                                                _SHARED_COLUMNS, API_BASE,
+                                                BULK_URL, IedbSource)
 from sourcerer.Sources.Specificity.Paginate import pageByRange
 from sourcerer.Exceptions import HttpError, IedbParseError
 from sourcerer.Http import HttpClient
 from sourcerer.Sources.Base import DataUnit, Query
 from tests.FakeHttp import FakeResponse, FakeSession, rangeHandler
+
+
+def blankReceptorRow():
+    """
+    A receptor CSV row, as a {(category, field): value} dict, every value ''.
+
+    Built from the module's own column mapping tables rather than a hand
+    written list, so a fixture row always has exactly the columns the mapping
+    code reads, however that mapping grows.
+    """
+    row = {key: '' for key in _SHARED_COLUMNS}
+    for chain_label in ('Chain 1', 'Chain 2'):
+        for column in ('Type', 'Nucleotide Sequence', 'Protein Sequence'):
+            row[(chain_label, column)] = ''
+        for curated, calculated in _CHAIN_PREFERRED.values():
+            row[(chain_label, curated)] = ''
+            row[(chain_label, calculated)] = ''
+        for column in _CHAIN_DIRECT.values():
+            row[(chain_label, column)] = ''
+        for column in _CHAIN_EXTRA.values():
+            row[(chain_label, column)] = ''
+
+    return row
+
+
+def makeReceptorFrame(rows):
+    """
+    Build a receptor chunk: a DataFrame with a (category, field) MultiIndex.
+
+    Arguments:
+      rows (list): one dict per row, as returned by blankReceptorRow(),
+        optionally overridden with the fields a test cares about.
+
+    Returns:
+      pandas.DataFrame: columns in the same shape readUnit produces.
+    """
+    columns = pandas.MultiIndex.from_tuples(list(rows[0].keys()))
+
+    return pandas.DataFrame([[row[c] for c in columns] for row in rows],
+                            columns=columns)
 
 
 def makeClient(handler):
@@ -231,18 +274,31 @@ class TestIedbSource(unittest.TestCase):
 
         self.assertEqual(len(frame), 2)
 
-    def test_read_unit_bulk_csv(self):
+    def test_read_unit_bulk_csv_honors_the_two_header_rows(self):
+        """
+        The receptor CSVs carry a category row over a field name row; reading
+        them with a single header row would take category labels ('Chain 1',
+        'Chain 2', ...) as column names and the real field names as a data row.
+        """
         source = IedbSource(makeClient(lambda *a: FakeResponse(200)))
         unit = DataUnit(unit_id='bcr_full_v3.csv', collection='bcr', url=BULK_URL)
 
+        row = blankReceptorRow()
+        row[('Receptor', 'IEDB Receptor ID')] = '1'
+        row[('Chain 1', 'Type')] = 'heavy'
+        row[('Chain 1', 'Nucleotide Sequence')] = 'ACGT'
+        frame_in = makeReceptorFrame([row])
+
         with tempfile.TemporaryDirectory() as outdir:
             path = Path(outdir) / 'bcr_full_v3.csv'
-            path.write_text('a,b\n1,2\n')
+            frame_in.to_csv(path, index=False)
             metadata, chunks = source.readUnit(path, unit)
             frame = pandas.concat(list(chunks), ignore_index=True)
 
         self.assertEqual(metadata, {})
-        self.assertEqual(frame.to_dict('records'), [{'a': '1', 'b': '2'}])
+        self.assertEqual(frame[('Chain 1', 'Type')].tolist(), ['heavy'])
+        self.assertEqual(frame[('Chain 1', 'Nucleotide Sequence')].tolist(),
+                         ['ACGT'])
 
     def test_read_unit_api_json(self):
         source = IedbSource(makeClient(lambda *a: FakeResponse(200)))
@@ -258,3 +314,138 @@ class TestIedbSource(unittest.TestCase):
         self.assertEqual(metadata, {})
         self.assertEqual(frame.to_dict('records'),
                          [{'receptor_group_id': 1, 'bcell_id': 2}])
+
+
+class TestIedbReceptorAirrMapping(unittest.TestCase):
+    """
+    Tests for mapping a receptor CSV row to per-chain AIRR records
+    """
+
+    def test_bcr_and_tcr_are_airr_collections(self):
+        self.assertEqual(IedbSource.airr_collections, frozenset(['bcr', 'tcr']))
+        self.assertEqual(IedbSource.airr_collections & set(IedbSource.collections),
+                         frozenset(['bcr', 'tcr']))
+
+    def _normalize(self, rows, collection='bcr'):
+        source = IedbSource(makeClient(lambda *a: FakeResponse(200)))
+        unit = DataUnit(unit_id='bcr_full_v3.csv', collection=collection, url=BULK_URL)
+        report = {'rows_in': 0, 'rows_out': 0}
+
+        frame = source.normalizeChunk({}, makeReceptorFrame(rows), unit, 0, report)
+
+        return frame, report
+
+    def test_a_two_chain_receptor_becomes_two_rows_sharing_a_cell_id(self):
+        row = blankReceptorRow()
+        row[('Receptor', 'IEDB Receptor ID')] = '42'
+        row[('Chain 1', 'Type')] = 'heavy'
+        row[('Chain 1', 'Nucleotide Sequence')] = 'ACGT'
+        row[('Chain 2', 'Type')] = 'kappa_light'
+        row[('Chain 2', 'Nucleotide Sequence')] = 'TTGG'
+
+        frame, report = self._normalize([row])
+
+        self.assertEqual(frame['sequence_id'].tolist(), ['42_1', '42_2'])
+        self.assertEqual(frame['cell_id'].tolist(), ['42', '42'])
+        self.assertEqual(frame['locus'].tolist(), ['IGH', 'IGK'])
+        self.assertEqual(frame['sequence'].tolist(), ['ACGT', 'TTGG'])
+        self.assertEqual(report['rows_in'], 1)
+        self.assertEqual(report['rows_out'], 2)
+
+    def test_a_single_chain_receptor_produces_only_the_present_chain(self):
+        """A missing second chain must not become a fabricated empty row."""
+        row = blankReceptorRow()
+        row[('Receptor', 'IEDB Receptor ID')] = '7'
+        row[('Chain 1', 'Type')] = 'alpha'
+        row[('Chain 1', 'Protein Sequence')] = 'EVQ'
+
+        frame, report = self._normalize([row], collection='tcr')
+
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame['sequence_id'].tolist(), ['7_1'])
+        self.assertEqual(frame['locus'].tolist(), ['TRA'])
+        self.assertEqual(report['rows_out'], 1)
+
+    def test_curated_value_is_preferred_over_calculated(self):
+        row = blankReceptorRow()
+        row[('Receptor', 'IEDB Receptor ID')] = '1'
+        row[('Chain 1', 'Type')] = 'heavy'
+        row[('Chain 1', 'Curated V Gene')] = 'IGHV1-2*02'
+        row[('Chain 1', 'Calculated V Gene')] = 'IGHV1-2*01'
+
+        frame, _ = self._normalize([row])
+
+        self.assertEqual(frame['v_call'].tolist(), ['IGHV1-2*02'])
+
+    def test_calculated_value_is_used_when_curated_is_blank(self):
+        row = blankReceptorRow()
+        row[('Receptor', 'IEDB Receptor ID')] = '1'
+        row[('Chain 1', 'Type')] = 'heavy'
+        row[('Chain 1', 'Calculated V Gene')] = 'IGHV1-2*01'
+
+        frame, _ = self._normalize([row])
+
+        self.assertEqual(frame['v_call'].tolist(), ['IGHV1-2*01'])
+
+    def test_an_unresolvable_chain_type_leaves_locus_blank_but_keeps_the_row(self):
+        row = blankReceptorRow()
+        row[('Receptor', 'IEDB Receptor ID')] = '1'
+        row[('Chain 1', 'Type')] = 'IgNAR'
+        row[('Chain 1', 'Protein Sequence')] = 'EVQ'
+
+        frame, _ = self._normalize([row])
+
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(frame['locus'].tolist(), [''])
+        self.assertEqual(frame['iedb_chain_type'].tolist(), ['IgNAR'])
+
+    def test_junction_aa_length_is_derived_and_left_blank_when_absent(self):
+        row1 = blankReceptorRow()
+        row1[('Receptor', 'IEDB Receptor ID')] = '1'
+        row1[('Chain 1', 'Type')] = 'heavy'
+        row1[('Chain 1', 'Junction Calculated')] = 'CARDYW'
+
+        row2 = blankReceptorRow()
+        row2[('Receptor', 'IEDB Receptor ID')] = '2'
+        row2[('Chain 1', 'Type')] = 'heavy'
+
+        frame, _ = self._normalize([row1, row2])
+
+        self.assertEqual(frame['junction_aa_length'].tolist(), ['6', ''])
+
+    def test_shared_receptor_and_epitope_context_is_carried_on_every_chain(self):
+        row = blankReceptorRow()
+        row[('Receptor', 'IEDB Receptor ID')] = '9'
+        row[('Receptor', 'Group IRI')] = 'https://www.iedb.org/receptor/9'
+        row[('Epitope', 'Name')] = 'ACE2 loop'
+        row[('Chain 1', 'Type')] = 'heavy'
+        row[('Chain 2', 'Type')] = 'kappa_light'
+
+        frame, _ = self._normalize([row])
+
+        self.assertEqual(frame['receptor_group_id'].tolist(),
+                         ['https://www.iedb.org/receptor/9'] * 2)
+        self.assertEqual(frame['epitope_name'].tolist(), ['ACE2 loop'] * 2)
+
+    def test_writes_as_a_header_and_row_valid_rearrangement(self):
+        """
+        The mapped frame is what `sourcerer specificity iedb download bcr`
+        actually writes: Convert.writeAirr fills in the required fields the
+        source data does not carry (rev_comp, cigars, ...) as blank columns,
+        the same way it does for every other source.
+        """
+        from sourcerer import Convert
+
+        row = blankReceptorRow()
+        row[('Receptor', 'IEDB Receptor ID')] = '1'
+        row[('Chain 1', 'Type')] = 'heavy'
+        row[('Chain 1', 'Nucleotide Sequence')] = 'ACGT'
+        row[('Chain 1', 'Junction Calculated')] = 'CARDYW'
+
+        frame, _ = self._normalize([row])
+
+        with tempfile.TemporaryDirectory() as outdir:
+            validation = Convert.writeAirr(iter([frame]), Path(outdir) / 'bcr.tsv')
+
+        self.assertTrue(validation['header_valid'])
+        self.assertEqual(validation['rows_invalid'], 0)

@@ -113,6 +113,14 @@ class SourceBase(ABC):
     #: Shown in `sourcerer sources list` and recorded in download provenance,
     #: since it is what governs how downloaded data may be reused.
     license = ''
+    #: Specificity collections whose normalizeChunk output is AIRR named
+    #: rearrangement records rather than the source's own column names. Empty
+    #: for every non-specificity source and for specificity collections that
+    #: are not sequences (assay results, join tables, ...), since those have
+    #: no natural AIRR shape. `sourcerer specificity <db> download` writes a
+    #: real, schema-validated rearrangement TSV for a listed collection and a
+    #: plain TSV for everything else.
+    airr_collections = frozenset()
     #: How to cite this source, one string per paper, oldest first. Shown in
     #: `sourcerer sources list` and recorded in download provenance, so that
     #: the record of what was downloaded travels with a reminder of how to

@@ -23,7 +23,8 @@ from sourcerer.Version import __version__
 
 
 def writeSpecificityMetadata(out, source, table, filters, limit, units,
-                             schema=None, license=None, citation=None):
+                             schema=None, license=None, citation=None,
+                             formats=('tsv',)):
     """
     Write the provenance record for a specificity download directory.
 
@@ -43,6 +44,10 @@ def writeSpecificityMetadata(out, source, table, filters, limit, units,
         knows the terms the data was obtained under.
       citation (tuple): the source's requested citation(s), if known, for the
         same reason.
+      formats (tuple): the normalized shape(s) written this run: 'tsv' for a
+        source-column dump, 'airr' where the source's collection is AIRR
+        shaped (see SourceBase.airr_collections). A run spanning several
+        tables can produce both.
 
     Returns:
       Path: the file written.
@@ -57,7 +62,7 @@ def writeSpecificityMetadata(out, source, table, filters, limit, units,
         'collection': table,
         'filters': dict(filters or {}),
         'limit': limit,
-        'formats': ['tsv'],
+        'formats': sorted(set(formats)),
         'units': len(units),
     }
     if schema is not None:

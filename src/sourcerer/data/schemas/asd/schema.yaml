@@ -1,0 +1,43 @@
+collections:
+  asd:
+    fields:
+    - name: dataset
+      pseudo_values: false
+      values:
+      - aae
+      - aatp
+      - ab-bind
+      - abbd
+      - abdesign
+      - alphaseq
+      - biomap
+      - buzz
+      - covid-19
+      - dlgo
+      - flab_hie2022
+      - flab_koenig2017
+      - flab_rosace2023
+      - flab_shanehsazzadeh2023
+      - flab_warszawski2019
+      - genbank
+      - hiv
+      - literature
+      - met
+      - osh
+      - patents
+      - rmna
+      - skempiv2
+      - structures-antibodies
+      - structures-nanobodies
+      wildcard: '*'
+    reported_totals: {}
+field_aliases: {}
+harvested: '2026-08-19T00:00:00Z'
+harvested_by: 'sourcerer 0.1.0 (hand curated, not scraped: ASD exposes no HTML form)'
+parse_contracts: {}
+schema_version: 1
+source: asd
+source_urls:
+  drive_folder: https://drive.google.com/drive/folders/1HY2GOVj-HR8t6Jmhe5MIJ6xmBCOxC45q
+  home: https://naturalantibody.com/agab/
+url_rules: {}

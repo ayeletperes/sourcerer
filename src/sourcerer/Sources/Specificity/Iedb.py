@@ -9,6 +9,16 @@ table produces exactly one DataUnit.
 
 IEDB has no HTML search form to scrape, so harvestSchema returns a hand
 curated snapshot rather than one built from a live page.
+
+The receptor bulk CSVs (bcr, tcr) are written with two header rows: a row of
+category labels (Receptor, Chain 1, Chain 2, ...) over a row of field names,
+and one file row describes a whole receptor -- both chains at once, side by
+side, rather than one row per sequence. normalizeChunk splits each receptor
+row into one AIRR rearrangement record per chain it actually carries, linked
+by cell_id, which is the shape `sourcerer specificity iedb download bcr`
+needs to write a real rearrangement TSV instead of a source-column dump.
+bcell and bcr_to_bcell carry no sequences -- one is assay results, the other
+a join table -- so they keep their own column names.
 """
 
 # Info
@@ -26,6 +36,7 @@ import pandas
 
 # Sourcerer imports
 from sourcerer.Sources.Specificity.Paginate import pageByRange
+from sourcerer.Convert import coerceAirrTypes
 from sourcerer.Exceptions import IedbParseError
 from sourcerer.Http import hashFile
 from sourcerer.Sources.Base import DataUnit, DownloadResult, SourceBase
@@ -56,6 +67,204 @@ _BULK_TABLES = frozenset(['bcr', 'tcr'])
 #: vocabulary.
 _QUALITATIVE_MEASURES = ('Positive', 'Positive-High', 'Positive-Intermediate',
                          'Positive-Low', 'Negative')
+
+#: The two chain slots a receptor CSV row carries, in file order, numbered
+#: for building each chain's sequence_id and sort rank.
+_CHAIN_LABELS = (('Chain 1', 1), ('Chain 2', 2))
+
+#: A chain's own "Type" value, as IEDB spells it, mapped to an AIRR locus.
+#: 'light' (kappa vs lambda undetermined), 'IgNAR' (shark heavy-chain-only),
+#: 'construct' and 'scFv' (engineered, not a single natural locus), and a
+#: blank (no chain in this slot) all resolve to '' rather than a guess.
+_LOCUS = {
+    'heavy': 'IGH', 'kappa_light': 'IGK', 'lambda_light': 'IGL',
+    'alpha': 'TRA', 'beta': 'TRB', 'gamma': 'TRG', 'delta': 'TRD',
+}
+
+#: Receptor-level columns, shared by both of a receptor's chain records,
+#: mapped from their (category, field name) header pair to a plain name.
+_SHARED_COLUMNS = {
+    ('Receptor', 'Group IRI'): 'receptor_group_id',
+    ('Receptor', 'IEDB Receptor ID'): 'iedb_receptor_id',
+    ('Receptor', 'Reference Name'): 'reference_name',
+    ('Receptor', 'Type'): 'receptor_type',
+    ('Reference', 'IEDB IRI'): 'reference_iri',
+    ('Epitope', 'IEDB IRI'): 'epitope_iri',
+    ('Epitope', 'Name'): 'epitope_name',
+    ('Epitope', 'Source Molecule'): 'epitope_source_molecule',
+    ('Epitope', 'Source Organism'): 'epitope_source_organism',
+    ('Assay', 'Type'): 'assay_type',
+    ('Assay', 'IEDB IDs'): 'assay_iedb_ids',
+    ('Assay', 'MHC Allele Names'): 'assay_mhc_allele_names',
+}
+
+#: Per-chain fields IEDB records twice, once curated (expert reviewed) and
+#: once calculated (automated); the curated value is kept where present, the
+#: calculated one otherwise. Maps the AIRR field name to (curated column,
+#: calculated column).
+_CHAIN_PREFERRED = {
+    'v_call': ('Curated V Gene', 'Calculated V Gene'),
+    'd_call': ('Curated D Gene', 'Calculated D Gene'),
+    'j_call': ('Curated J Gene', 'Calculated J Gene'),
+    'cdr1_aa': ('CDR1 Curated', 'CDR1 Calculated'),
+    'cdr1_start': ('CDR1 Start Curated', 'CDR1 Start Calculated'),
+    'cdr1_end': ('CDR1 End Curated', 'CDR1 End Calculated'),
+    'cdr2_aa': ('CDR2 Curated', 'CDR2 Calculated'),
+    'cdr2_start': ('CDR2 Start Curated', 'CDR2 Start Calculated'),
+    'cdr2_end': ('CDR2 End Curated', 'CDR2 End Calculated'),
+    'cdr3_aa': ('CDR3 Curated', 'CDR3 Calculated'),
+    'cdr3_start': ('CDR3 Start Curated', 'CDR3 Start Calculated'),
+    'cdr3_end': ('CDR3 End Curated', 'CDR3 End Calculated'),
+}
+
+#: Per-chain fields with one source column each, renamed straight to AIRR.
+_CHAIN_DIRECT = {
+    'sequence': 'Nucleotide Sequence',
+    'sequence_aa': 'Protein Sequence',
+    # IEDB's "Junction Calculated" runs Cys-to-Trp/Phe, the AIRR junction
+    # convention; there is no separate nucleotide junction column.
+    'junction_aa': 'Junction Calculated',
+}
+
+#: Per-chain fields kept verbatim under a sourcerer-owned name: no core AIRR
+#: field represents them, but they are real information, not noise.
+_CHAIN_EXTRA = {
+    'iedb_chain_type': 'Type',
+    'protein_iri': 'Protein IRI',
+    'v_domain_calculated_aa': 'V Domain Calculated',
+}
+
+#: Final column order for a receptor's AIRR rearrangement records: AIRR named
+#: fields first, then the sourcerer-owned extras, then the shared receptor,
+#: epitope and assay context every chain of the same receptor repeats.
+_AIRR_COLUMNS = (
+    'sequence_id', 'cell_id', 'locus', 'sequence', 'sequence_aa',
+    'v_call', 'd_call', 'j_call',
+    'cdr1_aa', 'cdr1_start', 'cdr1_end',
+    'cdr2_aa', 'cdr2_start', 'cdr2_end',
+    'cdr3_aa', 'cdr3_start', 'cdr3_end',
+    'junction_aa', 'junction_aa_length',
+    'iedb_chain_type', 'protein_iri', 'v_domain_calculated_aa',
+    'receptor_group_id', 'iedb_receptor_id', 'receptor_type',
+    'reference_name', 'reference_iri',
+    'epitope_iri', 'epitope_name', 'epitope_source_molecule',
+    'epitope_source_organism',
+    'assay_type', 'assay_iedb_ids', 'assay_mhc_allele_names',
+)
+
+
+def _readReceptorCsv(path, chunksize):
+    """
+    Open a receptor bulk CSV, honoring its two header rows.
+
+    Arguments:
+      path (Path): the downloaded bcr_full_v3.csv or tcr_full_v3.csv.
+      chunksize (int): rows per chunk.
+
+    Returns:
+      iterator: DataFrames with a (category, field) MultiIndex for columns.
+    """
+    return pandas.read_csv(path, header=[0, 1], chunksize=chunksize, dtype=str,
+                           na_filter=False)
+
+
+def _preferCurated(chain, curated, calculated):
+    """
+    Pick a chain field's curated value, falling back to the calculated one.
+
+    Arguments:
+      chain (pandas.DataFrame): one chain's columns, bare field names.
+      curated (str): the curated column name.
+      calculated (str): the calculated column name.
+
+    Returns:
+      pandas.Series: the curated value where present, the calculated one
+      elsewhere.
+    """
+    return chain[curated].where(chain[curated] != '', chain[calculated])
+
+
+def _chainFrame(chunk, chain_label, chain_number, shared):
+    """
+    Build one chain's AIRR rearrangement records out of a receptor chunk.
+
+    Arguments:
+      chunk (pandas.DataFrame): raw receptor rows, (category, field) columns.
+      chain_label (str): 'Chain 1' or 'Chain 2'.
+      chain_number (int): 1 or 2, used in sequence_id and the sort rank.
+      shared (pandas.DataFrame): the receptor-level columns, same index as
+        chunk, already renamed by _SHARED_COLUMNS.
+
+    Returns:
+      pandas.DataFrame: one row per input row, including rows with no chain in
+      this slot; the caller drops those using the '_present' column.
+    """
+    chain = chunk[chain_label]
+
+    frame = pandas.DataFrame(index=chunk.index)
+    for airr_field, (curated, calculated) in _CHAIN_PREFERRED.items():
+        frame[airr_field] = _preferCurated(chain, curated, calculated)
+    for airr_field, column in _CHAIN_DIRECT.items():
+        frame[airr_field] = chain[column]
+    for name, column in _CHAIN_EXTRA.items():
+        frame[name] = chain[column]
+
+    frame['locus'] = frame['iedb_chain_type'].map(_LOCUS).fillna('')
+
+    has_junction = frame['junction_aa'] != ''
+    frame['junction_aa_length'] = ''
+    frame.loc[has_junction, 'junction_aa_length'] = \
+        frame.loc[has_junction, 'junction_aa'].str.len().astype(str)
+
+    frame['sequence_id'] = shared['iedb_receptor_id'] + ('_%d' % chain_number)
+    frame['cell_id'] = shared['iedb_receptor_id']
+    for name in _SHARED_COLUMNS.values():
+        frame[name] = shared[name]
+
+    # A chain slot with nothing in it at all (single-chain receptors are
+    # common: a heavy-only submission, a TCR with only its beta sequenced)
+    # must not become a fabricated empty rearrangement record.
+    frame['_present'] = ((chain['Type'] != '') | (chain['Nucleotide Sequence'] != '')
+                         | (chain['Protein Sequence'] != ''))
+    # A stable sort key: chunk.index is the file's global row number, so this
+    # keeps a receptor's chains adjacent and chain 1 before chain 2, the same
+    # order regardless of how the file was chunked.
+    frame['_row'] = chunk.index
+    frame['_chain'] = chain_number
+
+    return frame
+
+
+def _receptorChunkToAirr(chunk, report):
+    """
+    Convert one chunk of receptor rows into AIRR rearrangement records.
+
+    Arguments:
+      chunk (pandas.DataFrame): raw receptor rows, (category, field) columns.
+      report (dict): counters to accumulate into.
+
+    Returns:
+      pandas.DataFrame: one row per chain actually present, sorted so a
+      receptor's chains stay adjacent with chain 1 first.
+    """
+    report['rows_in'] += len(chunk)
+
+    shared = pandas.DataFrame(index=chunk.index)
+    for key, name in _SHARED_COLUMNS.items():
+        shared[name] = chunk[key]
+
+    chains = [_chainFrame(chunk, label, number, shared)
+             for label, number in _CHAIN_LABELS]
+
+    frame = pandas.concat(chains, ignore_index=True)
+    frame = frame[frame['_present']]
+    frame = frame.sort_values(['_row', '_chain'], kind='stable')
+    frame = frame[list(_AIRR_COLUMNS)].reset_index(drop=True)
+    frame = coerceAirrTypes(frame)
+
+    report['rows_out'] += len(frame)
+
+    return frame
 
 
 def _rowHash(row):
@@ -113,6 +322,7 @@ class IedbSource(SourceBase):
         'bcell': 'B-cell assay records: antigen, epitope and qualitative outcome',
         'bcr_to_bcell': 'join table linking BCR receptor groups to B-cell assay records',
     }
+    airr_collections = _BULK_TABLES
 
     #: TODO: confirm exact license wording against https://www.iedb.org/about
     #: before this is relied on for redistribution terms.
@@ -262,11 +472,12 @@ class IedbSource(SourceBase):
 
         Returns:
           tuple: ({}, iterator of raw record chunks). IEDB tables carry no
-          per-unit metadata line.
+          per-unit metadata line. bcr and tcr chunks carry a (category,
+          field) MultiIndex for columns rather than flat column names, since
+          the source CSV has two header rows.
         """
         if unit.collection in _BULK_TABLES:
-            return {}, pandas.read_csv(path, chunksize=chunksize, dtype=str,
-                                       na_filter=False)
+            return {}, _readReceptorCsv(path, chunksize)
 
         with open(path) as handle:
             records = json.load(handle)
@@ -275,8 +486,12 @@ class IedbSource(SourceBase):
 
     def normalizeChunk(self, metadata, chunk, unit, offset, report):
         """
-        Pass a chunk's columns through unchanged, applying provenance and any
-        filter the fetch step could not apply server-side.
+        Normalize a chunk, applying provenance and any filter the fetch step
+        could not apply server-side.
+
+        bcr and tcr are mapped to AIRR rearrangement records, one per chain;
+        bcell and bcr_to_bcell pass their own columns through unchanged, since
+        they carry no sequences to name AIRR fields after.
 
         Arguments:
           metadata (dict): unused; IEDB tables carry no per-unit metadata.
@@ -286,11 +501,13 @@ class IedbSource(SourceBase):
           report (dict): counters to accumulate into.
 
         Returns:
-          pandas.DataFrame: the chunk with provenance columns added.
+          pandas.DataFrame: the normalized chunk, with provenance columns
+          added.
         """
-        report['rows_in'] += len(chunk)
-
-        frame = self._applyClientFilter(chunk, unit)
+        if unit.collection in _BULK_TABLES:
+            frame = _receptorChunkToAirr(chunk, report)
+        else:
+            frame = self._normalizeAssayChunk(chunk, unit, report)
 
         # apply(..., axis=1) on an empty frame cannot infer a row shape, so it
         # is skipped rather than trusted to return an empty result.
@@ -304,6 +521,25 @@ class IedbSource(SourceBase):
         frame['sourcerer_collection'] = unit.collection
         frame['sourcerer_unit_id'] = unit.unit_id
         frame['sourcerer_row_hash'] = row_hash
+
+        return frame
+
+    def _normalizeAssayChunk(self, chunk, unit, report):
+        """
+        Pass an assay or join table chunk's columns through unchanged,
+        applying any filter the fetch step could not apply server-side.
+
+        Arguments:
+          chunk (pandas.DataFrame): raw records, IEDB's own columns.
+          unit (DataUnit): what they came from.
+          report (dict): counters to accumulate into.
+
+        Returns:
+          pandas.DataFrame: the filtered chunk.
+        """
+        report['rows_in'] += len(chunk)
+
+        frame = self._applyClientFilter(chunk, unit)
 
         report['rows_out'] += len(frame)
 

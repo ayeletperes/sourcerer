@@ -45,6 +45,21 @@ class IedbParseError(ParseError):
     pass
 
 
+class CovAbDabParseError(ParseError):
+    """CoV-AbDab content did not match the expected structure."""
+    pass
+
+
+class AsdParseError(ParseError):
+    """ASD (Delta Lake) content did not match the expected structure."""
+    pass
+
+
+class AsdFetchError(SourcererError):
+    """ASD's Google Drive folder could not be fetched."""
+    pass
+
+
 class SchemaError(SourcererError):
     """A stored schema snapshot is missing, malformed or too new to understand."""
     pass
@@ -52,4 +67,9 @@ class SchemaError(SourcererError):
 
 class ConversionError(SourcererError):
     """A data unit could not be converted."""
+    pass
+
+
+class AnnotationError(SourcererError):
+    """A specificity annotation request could not be run as given."""
     pass

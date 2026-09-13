@@ -24,6 +24,8 @@ from sourcerer.Schema import loadSchema, saveSchema
 from sourcerer.Sources import REGISTRY, getSource
 from sourcerer.Sources.Specificity import REGISTRY as SPECIFICITY_REGISTRY
 from sourcerer.Sources.Specificity import getSpecificitySource
+from sourcerer.Sources.Specificity.AnnotateCli import (addAnnotateParser,
+                                                       handleAnnotate)
 from sourcerer.Sources.Specificity.Provenance import writeSpecificityMetadata
 from sourcerer.Version import __date__, __version__
 
@@ -150,6 +152,7 @@ def getArgParser():
     for name, source in sorted(REGISTRY.items()):
         _addSourceParser(commands, name, source)
     _addSpecificityGroupParser(commands)
+    addAnnotateParser(commands)
 
     return parser
 
@@ -300,8 +303,11 @@ def _addSpecificityParser(commands, name, source):
                    'print (or save with --out) a summary of it. Nothing is '
                    'downloaded.'),
         'download': ('download a table',
-                    'Fetch a table, optionally narrowed by filters, and '
-                    'write it as a raw mirror plus one normalized TSV.'),
+                    'Fetch a table, optionally narrowed by filters, and write '
+                    'it as a raw mirror plus one normalized TSV: a real AIRR '
+                    'rearrangement TSV for a table listed in the database\'s '
+                    'airr_collections, a plain TSV of the source\'s own '
+                    'columns otherwise.'),
     }
     for action, (helptext, description) in action_help.items():
         action_parser = actions.add_parser(action, help=helptext,
@@ -343,6 +349,10 @@ def _addSpecificityParser(commands, name, source):
                 leaf.add_argument('--no-resume', action='store_true',
                                   help='re-download in full rather than '
                                        'continuing a partly fetched file')
+                leaf.add_argument('--strict-airr', action='store_true',
+                                  help='for a table written as AIRR, drop '
+                                       'columns the AIRR schema does not '
+                                       'define; no effect on other tables')
 
 
 def _addSpecificityGroupParser(commands):
@@ -388,6 +398,10 @@ def _addSpecificityGroupParser(commands):
                               help='stop after this many tables, per database')
     all_download.add_argument('--dry-run', action='store_true',
                               help='report what would be fetched, then stop')
+    all_download.add_argument('--strict-airr', action='store_true',
+                              help='for a table written as AIRR, drop columns '
+                                   'the AIRR schema does not define; no effect '
+                                   'on other tables')
 
 
 def makeClient(args):
@@ -692,6 +706,7 @@ def handleSpecificityDownload(args):
     normalized_dir = outdir / 'specificity'
 
     records = []
+    formats_written = set()
     for table in tables:
         query = source.validateQuery(table, filters)
         units = source.searchUnits(query)
@@ -706,12 +721,23 @@ def handleSpecificityDownload(args):
             _, chunks, report = source.convertUnit(result.path, unit)
 
             dest = normalized_dir / ('%s.tsv' % table)
-            rows = _writeSpecificityTsv(chunks, dest)
-            log.info('%s: %d rows in, %d rows written', dest.name,
-                     report['rows_in'], rows)
+            if table in source.airr_collections:
+                validation = Convert.writeAirr(chunks, dest,
+                                               strict=args.strict_airr)
+                Convert.writeValidationReport(validation, dest)
+                log.info('%s: %d rows, %d invalid, %d rows in', dest.name,
+                         validation['rows_checked'], validation['rows_invalid'],
+                         report['rows_in'])
+                output_format = 'airr'
+            else:
+                rows = _writeSpecificityTsv(chunks, dest)
+                log.info('%s: %d rows in, %d rows written', dest.name,
+                         report['rows_in'], rows)
+                output_format = 'tsv'
+            formats_written.add(output_format)
 
-            records.append(Provenance.buildUnitRecord(unit, result, outdir,
-                                                       {'tsv': dest}))
+            records.append(Provenance.buildUnitRecord(
+                unit, result, outdir, {output_format: dest}))
 
     if args.dry_run:
         log.info('dry run: nothing downloaded')
@@ -723,7 +749,8 @@ def handleSpecificityDownload(args):
     # see Specificity.Provenance for why that is a separate writer.
     writeSpecificityMetadata(
         outdir, args.db, args.table, filters, args.limit, records,
-        schema=source.schema, license=source.license, citation=source.citation)
+        schema=source.schema, license=source.license, citation=source.citation,
+        formats=formats_written or ('tsv',))
 
     return 0
 
@@ -736,7 +763,8 @@ def handleSpecificityDownloadAll(args):
         log.info('downloading specificity source %s', name)
         handleSpecificityDownload(Namespace(
             db=name, table='all', outdir=outdir / name, limit=args.limit,
-            dry_run=args.dry_run, no_resume=False))
+            dry_run=args.dry_run, no_resume=False,
+            strict_airr=args.strict_airr))
 
     return 0
 
@@ -788,6 +816,9 @@ def main():
                 return handleSpecificitySearch(args)
             if args.action == 'download':
                 return handleSpecificityDownload(args)
+
+        if args.command == 'annotate':
+            return handleAnnotate(args)
 
         parser.print_help(sys.stderr)
         return 1

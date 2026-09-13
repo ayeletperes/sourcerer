@@ -34,6 +34,11 @@ dependencies = [
     "pandas>=2.2.3",
     "airr>=2.0",
     "tqdm>=4.64",
+    # ASD's data unit is a Delta Lake of Parquet partitions, staged in a
+    # Google Drive folder: pyarrow reads the partitions, gdown fetches the
+    # folder, since it has no plain HTTP download.
+    "pyarrow>=14",
+    "gdown>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +58,11 @@ path = "src/sourcerer/Version.py"
 # automatically as part of the package. Do not add a force-include for them: it
 # duplicates every file and the build fails.
 packages = ["src/sourcerer"]
+# Specificity's own tests live alongside its source
+# (Sources/Specificity/tests/) rather than under the top level tests/
+# directory; exclude them here so a built wheel still ships no test code,
+# matching every other source under src/sourcerer.
+exclude = ["src/sourcerer/Sources/Specificity/tests/*"]
 
 [tool.ruff]
 line-length = 90

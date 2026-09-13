@@ -34,6 +34,12 @@ class FakeResponse:
         self.headers = CaseInsensitiveDict(headers or {})
         self.closed = False
 
+    @property
+    def text(self):
+        """str: the body decoded as UTF-8, like requests.Response.text."""
+        return self.content.decode('utf-8') if isinstance(self.content, bytes) \
+            else self.content
+
     def iter_content(self, chunk_size=1024):
         """Yield the body in chunk_size pieces."""
         for start in range(0, len(self.content), chunk_size):

@@ -1,0 +1,13 @@
+collections:
+  antibodies:
+    fields: []
+    reported_totals: {}
+field_aliases: {}
+harvested: '2026-08-19T00:00:00Z'
+harvested_by: 'sourcerer 0.1.0 (hand curated, not scraped: CoV-AbDab exposes no HTML form)'
+parse_contracts: {}
+schema_version: 1
+source: covabdab
+source_urls:
+  home: https://opig.stats.ox.ac.uk/webapps/covabdab/
+url_rules: {}

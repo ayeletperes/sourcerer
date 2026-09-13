@@ -2,19 +2,23 @@
 Specificity source registry
 
 A second, separate registry from sourcerer.Sources: specificity databases
-(IEDB, and others to follow) are SourceBase subclasses too, but are kept apart
-from repertoire sources so the commandline can mount them under their own
-`sourcerer specificity <db>` tree instead of `sourcerer <source>`.
+(IEDB, CoV-AbDab, ASD, and others to follow) are SourceBase subclasses too,
+but are kept apart from repertoire sources so the commandline can mount them
+under their own `sourcerer specificity <db>` tree instead of `sourcerer
+<source>`.
 """
 
 # Info
 __author__ = 'Pramod Shinde'
 
 # Sourcerer imports
+from sourcerer.Sources.Specificity.Asd import AsdSource
+from sourcerer.Sources.Specificity.CovAbDab import CovAbDabSource
 from sourcerer.Sources.Specificity.Iedb import IedbSource
 
 #: Every specificity source sourcerer knows about, by commandline name.
-REGISTRY = {IedbSource.name: IedbSource}
+REGISTRY = {IedbSource.name: IedbSource, CovAbDabSource.name: CovAbDabSource,
+           AsdSource.name: AsdSource}
 
 
 def getSpecificitySource(name, client, schema=None):

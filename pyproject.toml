@@ -39,6 +39,9 @@ dependencies = [
     # folder, since it has no plain HTTP download.
     "pyarrow>=14",
     "gdown>=5.0",
+    # runLevenshteinAnnotation uses rapidfuzz.distance.Levenshtein for
+    # indel-tolerant (substitution + insertion + deletion) sequence comparison.
+    "rapidfuzz>=3.0",
 ]
 
 [project.optional-dependencies]

@@ -8,14 +8,23 @@ stage: download a specificity database (`sourcerer specificity iedb download
 bcr`), which already lands as a real AIRR rearrangement TSV, then annotate a
 user's own AIRR table against it as the reference.
 
-Two ways to decide a hit today:
+Three ways to decide a hit today:
 
-    runExactAnnotation    a single column, byte-identical, CompAIRR
-                          accelerated (hash-based lookup, optionally gated
-                          by exact V/J-gene agreement)
-    runFuzzyAnnotation    one or more columns, up to `max_mismatches`
-                          substitutions allowed (pooled across columns if
-                          more than one), pure Python
+    runExactAnnotation        a single column, byte-identical, CompAIRR
+                              accelerated (hash-based lookup, optionally
+                              gated by exact V/J-gene agreement)
+    runFuzzyAnnotation        one or more columns, up to `max_mismatches`
+                              substitutions allowed (pooled across columns
+                              if more than one), pure Python
+    runLevenshteinAnnotation  a single column, up to `max_edits`
+                              substitutions/insertions/deletions combined,
+                              pure Python (rapidfuzz)
+
+runPairedExactAnnotation builds on runExactAnnotation for the case where a
+query row is one chain of an antibody rather than a self-contained unit: it
+runs the exact criterion once per chain (heavy, light) and reconciles the
+two per antibody, classifying each as agreeing with the same reference
+antibody on both chains, one chain only, or neither.
 
 runExactAnnotation requires the compairr binary
 (https://github.com/uio-bmi/compairr, Rognes et al. 2022, Bioinformatics),
@@ -31,10 +40,18 @@ residues, and hard-errors on an empty/missing sequence value rather than
 treating it as a length-0 field -- see runExactAnnotation's docstring for how
 those rows are handled instead.
 
-Indel-tolerant (Levenshtein) and substitution-matrix-weighted (BLOSUM)
-annotation are intentionally not included in this first pass -- see the
-sibling project this was ported from (`analysis/matching/matching.py` in
-specificity-annotations) if one of those is needed later.
+runLevenshteinAnnotation has neither the wildcard handling nor the
+length-bucketed index the other two share: Levenshtein distance lets a query
+and a candidate differ in length, so length can't prefilter candidates, and a
+wildcard has no clean meaning once an alignment can shift position. It also
+takes only a single column, unlike runFuzzyAnnotation -- see its section
+header for why edit distance does not pool across columns the way Hamming
+distance does.
+
+Substitution-matrix-weighted (BLOSUM) annotation is intentionally not
+included in this first pass -- see the sibling project this was ported from
+(`analysis/matching/matching.py` in specificity-annotations) if it is needed
+later.
 """
 
 # Info
@@ -47,6 +64,7 @@ import tempfile
 from pathlib import Path
 
 import pandas
+from rapidfuzz.distance import Levenshtein
 
 # Sourcerer imports
 from sourcerer.Exceptions import AnnotationError
@@ -59,6 +77,15 @@ DEFAULT_ID_COL = 'sequence_id'
 #: fallback runExactAnnotation uses for rows compairr cannot handle --
 #: compairr itself has no wildcard concept.
 WILDCARD = 'X'
+
+#: runPairedExactAnnotation's fixed column names -- one antibody's heavy and
+#: light chain are two rows of the same AIRR table, linked by `cell_id` and
+#: told apart by `locus`; there is nothing to make configurable here beyond
+#: what the AIRR schema already fixes these fields to mean.
+CELL_ID_COL = 'cell_id'
+LOCUS_COL = 'locus'
+HEAVY_LOCUS = 'IGH'
+LIGHT_LOCI = ('IGK', 'IGL')
 
 
 def _valueDistance(a, b):
@@ -218,8 +245,8 @@ def runFuzzyAnnotation(queries, reference, compare_cols, max_mismatches,
       queries (pandas.DataFrame): the input rows to annotate.
       reference (pandas.DataFrame): the fixed table being annotated against.
       compare_cols (list): column names to compare.
-      max_mismatches (float): the mismatch budget -- an absolute count, or a
-        fraction of the query's length when `threshold_is_fraction` is True.
+      max_mismatches (float): the mismatch tolerance -- an absolute count, or
+        a fraction of the query's length when `threshold_is_fraction` is True.
       id_col (str): column in `reference` holding each row's identifier.
       exact_cols (list): column names that must agree exactly first, e.g.
         `['v_call']`. None for no such gate.
@@ -520,6 +547,197 @@ def runExactAnnotation(queries, reference, seq_col, id_col=DEFAULT_ID_COL,
             'n_hits_total': len(hit_ids),
             'is_unique_hit': len(hit_ids) <= 1,
             'hit_ids': ';'.join(hit_ids),
+        })
+
+    return pandas.DataFrame(rows)
+
+
+# ── paired heavy+light exact annotation ─────────────────────────────────────
+
+def _hitsByCellId(query_chain, chain_result, cell_id_col):
+    """
+    Fold one chain's runExactAnnotation output into a hit set per antibody.
+
+    Arguments:
+      query_chain (pandas.DataFrame): the query rows runExactAnnotation was
+        called on for this chain, in the same order (its index reset to
+        0..n-1, matching `chain_result`'s `query_row`).
+      chain_result (pandas.DataFrame): runExactAnnotation's output for
+        `query_chain`.
+      cell_id_col (str): column in `query_chain` identifying the antibody a
+        chain row belongs to.
+
+    Returns:
+      dict: query antibody id to the set of reference antibody ids (as read
+      off `id_col` when runExactAnnotation was called -- expected to be
+      `cell_id_col` on the reference side too) whose corresponding chain
+      agreed with it.
+    """
+    cell_ids = query_chain[cell_id_col].reset_index(drop=True)
+    hits = {}
+    for row in chain_result.itertuples(index=False):
+        if not row.hit_ids:
+            continue
+        cell_id = cell_ids.iloc[row.query_row]
+        hits.setdefault(cell_id, set()).update(row.hit_ids.split(';'))
+
+    return hits
+
+
+def runPairedExactAnnotation(queries, reference, cdr3_col='cdr3_aa',
+                             vgene_col='v_call', jgene_col='j_call',
+                             compairr_bin=None, threads=1):
+    """
+    Classify each query antibody by whether the *same* reference antibody
+    agrees with it on the heavy chain, the light chain, both, or neither.
+
+    An antibody is two rows of an AIRR table -- a heavy chain and, where
+    present, a light chain -- sharing one `cell_id` and told apart by
+    `locus` (`IGH` for heavy, `IGK`/`IGL` for light). Agreement on a chain
+    is runExactAnnotation's criterion (exact V-gene, exact J-gene, exact
+    CDR3), run once for the heavy rows and once for the light rows; a
+    reference antibody counts toward "both" only if its `cell_id` appears in
+    *both* chains' hit sets for the query antibody, not merely in each
+    independently -- a query whose heavy chain happens to match one
+    reference antibody and whose light chain happens to match an unrelated
+    one is `conflicting`, not `both`.
+
+    Arguments:
+      queries (pandas.DataFrame): query AIRR rows, both chains, with `locus`
+        and `cell_id` columns.
+      reference (pandas.DataFrame): reference AIRR rows, same shape.
+      cdr3_col (str): the CDR3 amino acid column.
+      vgene_col (str): the V-gene call column.
+      jgene_col (str): the J-gene call column.
+      compairr_bin (str): path to the compairr binary, or None to search
+        PATH.
+      threads (int): compairr's own `-t`; see runExactAnnotation.
+
+    Returns:
+      pandas.DataFrame: one row per query `cell_id`: `classification` (one
+      of `both`, `heavy_only`, `light_only`, `conflicting`, `neither`),
+      `heavy_hit_ids`, `light_hit_ids` (every reference antibody agreeing on
+      that chain alone, semicolon joined, sorted) and `both_hit_ids` (their
+      intersection -- non-empty only when `classification` is `both`).
+    """
+    query_heavy = queries[queries[LOCUS_COL] == HEAVY_LOCUS]
+    query_light = queries[queries[LOCUS_COL].isin(LIGHT_LOCI)]
+    reference_heavy = reference[reference[LOCUS_COL] == HEAVY_LOCUS]
+    reference_light = reference[reference[LOCUS_COL].isin(LIGHT_LOCI)]
+
+    query_heavy = query_heavy.reset_index(drop=True)
+    query_light = query_light.reset_index(drop=True)
+    reference_heavy = reference_heavy.reset_index(drop=True)
+    reference_light = reference_light.reset_index(drop=True)
+
+    heavy_result = runExactAnnotation(query_heavy, reference_heavy, cdr3_col,
+                                      id_col=CELL_ID_COL, vgene_col=vgene_col,
+                                      jgene_col=jgene_col,
+                                      compairr_bin=compairr_bin, threads=threads)
+    light_result = runExactAnnotation(query_light, reference_light, cdr3_col,
+                                      id_col=CELL_ID_COL, vgene_col=vgene_col,
+                                      jgene_col=jgene_col,
+                                      compairr_bin=compairr_bin, threads=threads)
+
+    heavy_hits = _hitsByCellId(query_heavy, heavy_result, CELL_ID_COL)
+    light_hits = _hitsByCellId(query_light, light_result, CELL_ID_COL)
+
+    rows = []
+    for cell_id in sorted(set(queries[CELL_ID_COL])):
+        heavy = heavy_hits.get(cell_id, set())
+        light = light_hits.get(cell_id, set())
+        both = heavy & light
+
+        if both:
+            classification = 'both'
+        elif heavy and light:
+            classification = 'conflicting'
+        elif heavy:
+            classification = 'heavy_only'
+        elif light:
+            classification = 'light_only'
+        else:
+            classification = 'neither'
+
+        rows.append({
+            'cell_id': cell_id,
+            'classification': classification,
+            'heavy_hit_ids': ';'.join(sorted(heavy)),
+            'light_hit_ids': ';'.join(sorted(light)),
+            'both_hit_ids': ';'.join(sorted(both)),
+        })
+
+    return pandas.DataFrame(rows)
+
+
+# ── indel-tolerant annotation (Levenshtein) ─────────────────────────────────
+#
+# Unlike runFuzzyAnnotation, there is no length-bucketed index and no
+# 'X'-wildcard handling here: Levenshtein allows a query and a candidate to
+# differ in length, so a per-column length key can't prefilter candidates, and
+# a wildcard has no clean meaning once an alignment can shift positions.
+# Candidates are only pre-filtered by `exact_cols` (e.g. V-gene, J-gene), then
+# compared to every query brute-force within that block. Also unlike
+# runFuzzyAnnotation, this only ever takes a single seq_col: edit distance
+# summed across multiple columns independently aligned doesn't correspond to
+# any one alignment of the concatenated sequence, so it does not generalize
+# the way Hamming distance pools cleanly across columns.
+
+def runLevenshteinAnnotation(queries, reference, seq_col, max_edits,
+                             id_col=DEFAULT_ID_COL, exact_cols=None):
+    """
+    Annotate each query row against `reference` allowing up to `max_edits`
+    substitutions, insertions and deletions combined in `seq_col` -- the
+    indel-tolerant counterpart to runFuzzyAnnotation's substitution-only
+    criterion, via rapidfuzz's Levenshtein distance.
+
+    Arguments:
+      queries (pandas.DataFrame): the input rows to annotate.
+      reference (pandas.DataFrame): the fixed table being annotated against.
+      seq_col (str): the single column to compare.
+      max_edits (int): the edit-distance tolerance (substitutions +
+        insertions + deletions combined).
+      id_col (str): column in `reference` holding each row's identifier.
+      exact_cols (list): column names that must agree exactly first, e.g.
+        `['v_call', 'j_call']`. None for no such gate.
+
+    Returns:
+      pandas.DataFrame: one row per query row, columns `query_row`,
+      `n_hits_total`, `min_mismatches` (edit distance here, not substitution
+      count), `is_unique_hit`, `hit_ids`.
+    """
+    reference_exact = (_rowValues(reference, exact_cols) if exact_cols
+                       else [()] * len(reference))
+    reference_seqs = reference[seq_col].fillna('').astype(str).tolist()
+    reference_ids = reference[id_col].tolist()
+
+    buckets = {}
+    for seq, exact_values, row_id in zip(reference_seqs, reference_exact,
+                                         reference_ids):
+        buckets.setdefault(exact_values, []).append((seq, row_id))
+
+    query_exact = (_rowValues(queries, exact_cols) if exact_cols
+                  else [()] * len(queries))
+    query_seqs = queries[seq_col].fillna('').astype(str).tolist()
+
+    rows = []
+    for query_row, (query_seq, row_exact) in enumerate(zip(query_seqs, query_exact)):
+        best_by_id = {}
+        for cand_seq, row_id in buckets.get(row_exact, []):
+            distance = Levenshtein.distance(query_seq, cand_seq,
+                                            score_cutoff=max_edits)
+            if distance <= max_edits:
+                if row_id not in best_by_id or distance < best_by_id[row_id]:
+                    best_by_id[row_id] = distance
+
+        hit_ids = sorted(best_by_id, key=lambda x: (best_by_id[x], str(x)))
+        rows.append({
+            'query_row': query_row,
+            'n_hits_total': len(hit_ids),
+            'min_mismatches': float(min(best_by_id.values()))
+                              if best_by_id else float('nan'),
+            'is_unique_hit': len(hit_ids) <= 1,
+            'hit_ids': ';'.join(str(x) for x in hit_ids),
         })
 
     return pandas.DataFrame(rows)

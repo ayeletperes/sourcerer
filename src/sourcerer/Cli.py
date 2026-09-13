@@ -26,6 +26,7 @@ from sourcerer.Sources.Specificity import REGISTRY as SPECIFICITY_REGISTRY
 from sourcerer.Sources.Specificity import getSpecificitySource
 from sourcerer.Sources.Specificity.AnnotateCli import (addAnnotateParser,
                                                        handleAnnotate)
+from sourcerer.Sources.Specificity.BcrCli import addBcrParser, handleBcr
 from sourcerer.Sources.Specificity.Provenance import writeSpecificityMetadata
 from sourcerer.Version import __date__, __version__
 
@@ -374,6 +375,8 @@ def _addSpecificityGroupParser(commands):
                     'fetch from, along with a one-line description and its '
                     'homepage.',
         formatter_class=CommonHelpFormatter)
+
+    addBcrParser(dbs)
 
     for name, source in sorted(SPECIFICITY_REGISTRY.items()):
         _addSpecificityParser(dbs, name, source)
@@ -810,6 +813,8 @@ def main():
                 return handleSpecificityList(args)
             if args.db == 'all':
                 return handleSpecificityDownloadAll(args)
+            if args.db == 'bcr':
+                return handleBcr(args)
             # The action and table levels are required subparsers, so argparse
             # has already rejected a commandline missing either.
             if args.action == 'search':

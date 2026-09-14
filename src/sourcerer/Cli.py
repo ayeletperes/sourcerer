@@ -29,15 +29,9 @@ log = logging.getLogger('sourcerer')
 #: Output formats the download and convert subcommands can produce.
 FORMATS = ('raw', 'airr', 'fasta')
 
-#: Pseudo-collection offered by germline sources, downloading every species into
-#: one reference_base. Only those sources get it: OAS's collections are paired
-#: and unpaired, which have different fields and different outputs, so there is
-#: nothing coherent to combine.
-#:
-#: It means every species sourcerer supports, which is not every species the
-#: source publishes -- OGRDB also carries rhesus macaque, deer mouse and rainbow
-#: trout, and IMGT many more. Supporting one means declaring it in
-#: Reference.SPECIES, each source's species tables and, for OGRDB, its SETS.
+#: Pseudo-collection for germline sources: fetch every species sourcerer supports
+#: into one reference_base. Not offered for OAS (its collections are paired and
+#: unpaired, not species) nor for search (two species would merge two hit lists).
 ALL_SPECIES = 'all'
 
 #: Above this many values, a filter flag's help lists only a sample instead of
@@ -637,71 +631,45 @@ def applyPins(source, from_ref, species):
     log.info('re-downloading pinned: %s', '; '.join(applied))
 
 
-def fetchSpecies(args, source, species, outdir):
-    """
-    Download one species and build it into the shared reference_base.
-
-    Split out so several species can go into one folder: each is pinned,
-    searched and fetched on its own, and each writes its own provenance, which
-    the sidecars merge rather than replace.
-
-    Arguments:
-      args (Namespace): parsed arguments.
-      source (ReferenceSource): the source to download from.
-      species (str): the species to fetch.
-      outdir (Path): the download root.
-
-    Returns:
-      list: provenance records for the units fetched, empty on a dry run.
-    """
-    if args.from_ref is not None:
-        applyPins(source, args.from_ref, species)
-
-    query = source.validateQuery(species, collectFilters(args))
-    if args.limit is not None:
-        query = type(query)(collection=query.collection, filters=query.filters,
-                            limit=args.limit)
-
-    units = source.searchUnits(query)
-    log.info('%d germline files for %s %s', len(units), args.source, species)
-
-    if args.dry_run:
-        for unit in units:
-            print('%-48s %s' % (unit.unit_id, unit.url))
-        return []
-
-    entries, provenance = [], []
-    for unit in units:
-        result = source.fetchUnit(unit, outdir / 'raw',
-                                  resume=not args.no_resume)
-        entries.append((unit, result.path))
-        provenance.append(Provenance.buildUnitRecord(unit, result, outdir, {}))
-
-    reference_dir = outdir / 'reference_base'
-    source.buildReference(entries, reference_dir).logSummary()
-    for path in source.writeReferenceMetadata(reference_dir, units):
-        log.info('wrote %s', path)
-
-    return provenance
-
-
 def handleReferenceDownload(args, source):
-    """Download germline sets and build an airrflow reference_base."""
+    """Download one species, or all, and build an airrflow reference_base."""
     species = (list(source.collections) if args.collection == ALL_SPECIES
                else [args.collection])
     if args.resolve_doi and hasattr(source, 'enableDoi'):
         source.enableDoi()
 
     outdir = Path(args.outdir)
+    reference_dir = outdir / 'reference_base'
     provenance = []
+    # Each species is pinned, fetched and built on its own; the provenance
+    # sidecars merge across them, so several land in one reference_base.
     for name in species:
-        provenance.extend(fetchSpecies(args, source, name, outdir))
+        if args.from_ref is not None:
+            applyPins(source, args.from_ref, name)
+        query = source.validateQuery(name, collectFilters(args))
+        if args.limit is not None:
+            query = type(query)(collection=query.collection,
+                                filters=query.filters, limit=args.limit)
+        units = source.searchUnits(query)
+        log.info('%d germline files for %s %s', len(units), args.source, name)
+        if args.dry_run:
+            for unit in units:
+                print('%-48s %s' % (unit.unit_id, unit.url))
+            continue
+        entries = []
+        for unit in units:
+            result = source.fetchUnit(unit, outdir / 'raw',
+                                      resume=not args.no_resume)
+            entries.append((unit, result.path))
+            provenance.append(Provenance.buildUnitRecord(unit, result, outdir, {}))
+        source.buildReference(entries, reference_dir).logSummary()
+        for path in source.writeReferenceMetadata(reference_dir, units):
+            log.info('wrote %s', path)
 
     if args.dry_run:
         log.info('dry run: nothing downloaded')
         return 0
 
-    reference_dir = outdir / 'reference_base'
     log.info('wrote %s', reference_dir)
 
     formats = ['reference']

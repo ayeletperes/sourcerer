@@ -394,6 +394,13 @@ def _addSourceParser(commands, name, source):
                                            'not define')
 
 
+#: Request delay for the IgBLAST support mirror. The default is cautious because
+#: IMGT and OGRDB are small academic servers; NCBI's file server and GitHub's raw
+#: host are bulk services, and the mirror alone makes 100+ requests, so the
+#: default would spend most of a build asleep rather than transferring.
+MIRROR_DELAY = 0.05
+
+
 def makeClient(args):
     """Build the shared HTTP client."""
     return HttpClient()
@@ -577,7 +584,7 @@ def handleReference(args):
         raise SourcererError('--out is required to build; pass --check to only '
                              'validate the folder')
 
-    report = Reference.buildFromPlan(plan, args.out, makeClient(args))
+    report = Reference.buildFromPlan(plan, args.out, HttpClient(delay=MIRROR_DELAY))
     for path in Reference.writeBuildMetadata(
             args.out, report, args.folder, Provenance.timestamp()[:10],
             'sourcerer %s' % __version__):
@@ -701,7 +708,8 @@ def handleReferenceDownload(args, source):
     if args.igblast:
         igblast_out = args.igblast_out or (outdir / 'igblast_base')
         report = Reference.buildIgblastBase(reference_dir, igblast_out,
-                                            source.client, species=species)
+                                            HttpClient(delay=MIRROR_DELAY),
+                                            species=species)
         Reference.writeBuildMetadata(igblast_out, report, reference_dir,
                                      Provenance.timestamp()[:10],
                                      'sourcerer %s' % __version__)

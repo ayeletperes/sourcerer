@@ -582,6 +582,11 @@ def handleSchemaRefresh(args):
     for collection in wanted:
         log.info('harvesting %s %s catalog', args.source, collection)
         rows = source.harvestCatalog(collection, schema=schema)
+        if rows is None:
+            # This source searches live rather than through an offline
+            # catalog (every germline source today), so there is nothing
+            # here to merge, enrich from detail pages, or write.
+            continue
 
         path = out / ('%s_catalog.tsv' % collection)
         rows = Catalog.mergeEnrichment(Catalog.loadCatalog(path), rows)

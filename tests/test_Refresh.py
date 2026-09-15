@@ -23,6 +23,8 @@ from pathlib import Path
 # Sourcerer imports
 from sourcerer import Cli
 from sourcerer.Http import HttpClient
+from sourcerer.Schema import Collection, SourceSchema
+from sourcerer.Sources.Base import SourceBase
 from tests.FakeHttp import FakeSession, rangeHandler
 
 test_path = os.path.dirname(os.path.realpath(__file__))
@@ -155,6 +157,63 @@ class TestQuietRefresh(unittest.TestCase):
             # re-chosen; re-picking every run would churn the snapshot diff.
             self.assertIn(
                 'Banerjee_2017/csv/SRR5060322_Heavy_IGHA.csv.gz', pins)
+
+
+class StubCatalogFreeSource(SourceBase):
+    """
+    A source with no offline catalog -- the shape every germline source has.
+
+    Exercises SourceBase's default harvestCatalog (returns None) against the
+    real refresh path: imgt, ogrdb and airrc-imgt all inherit that default
+    rather than overriding it the way OasSource does. Before the default
+    existed, `schema refresh` called harvestCatalog and enrichCatalog
+    unconditionally, and any source but OAS raised AttributeError the moment
+    it reached the catalog loop.
+    """
+
+    name = 'stub'
+    collections = ('human',)
+
+    def harvestSchema(self):
+        return SourceSchema(
+            source=self.name, harvested='2026-01-01T00:00:00Z',
+            harvested_by='test',
+            collections={'human': Collection(name='human', fields=())})
+
+    def searchUnits(self, query):
+        raise NotImplementedError
+
+    def readUnit(self, path, unit):
+        raise NotImplementedError
+
+    def normalizeChunk(self, metadata, chunk, unit, offset, report):
+        raise NotImplementedError
+
+
+class TestRefreshWithoutACatalog(unittest.TestCase):
+    """
+    Tests for schema refresh against a source that keeps no offline catalog
+    """
+
+    def setUp(self):
+        self._original = Cli.getSource
+        Cli.getSource = lambda name, client, schema=None: StubCatalogFreeSource(client)
+
+    def tearDown(self):
+        Cli.getSource = self._original
+
+    def test_a_source_with_no_catalog_hook_refreshes_without_crashing(self):
+        with tempfile.TemporaryDirectory() as out:
+            args = argparse.Namespace(source='stub', out=Path(out), collection=None,
+                                      refresh_details='auto', detail_limit=None)
+
+            self.assertEqual(Cli.handleSchemaRefresh(args), 0)
+
+            written = os.listdir(out)
+            self.assertIn('schema.yaml', written)
+            # No catalog is written for a collection harvestCatalog declined to
+            # catalog at all -- there is nothing here to merge or enrich.
+            self.assertNotIn('human_catalog.tsv', written)
 
 
 if __name__ == '__main__':

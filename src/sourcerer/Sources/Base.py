@@ -197,6 +197,30 @@ class SourceBase(ABC):
           pandas.DataFrame: normalized records.
         """
 
+    def harvestCatalog(self, collection, schema=None):
+        """
+        Build a catalog of every data unit in a collection, if this source
+        keeps one.
+
+        Most sources search live and have nothing to write here: `schema
+        refresh` calls this once per collection and, seeing None back, skips
+        merging, detail-page enrichment and writing a catalog file for it.
+        OAS is the exception -- its paired collection has no upstream index
+        at all, and unpaired's is a 7 MB document not worth re-fetching on
+        every search -- so it overrides this and `enrichCatalog` together.
+
+        Arguments:
+          collection (str): which collection to catalog.
+          schema (SourceSchema): the schema to take wildcards from, if the
+            source needs one to build a query. Passed explicitly during a
+            refresh, when the freshly harvested schema is newer than any
+            packaged one and may be the only one that exists.
+
+        Returns:
+          list: catalog rows, or None if this source keeps no offline catalog.
+        """
+        return None
+
     def harvestArtifacts(self, out, schema, catalogs):
         """
         Write source specific snapshot artifacts beyond the schema and catalogs.

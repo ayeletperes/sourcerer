@@ -327,6 +327,34 @@ class TestStaleSnapshotFixture(unittest.TestCase):
         self.assertTrue(all(x.level == 'additive' for x in layout))
 
 
+class TestPackagedCatalogHasNoUnescapedFormValues(unittest.TestCase):
+    """
+    Regression test for the escaped-comma BType anomaly.
+
+    Detail pages escape a comma in a value the same way the search form does
+    (e.g. BType's 'Plasmablasts\\, Memory B cells and activated T cells'), and
+    enrichCatalog used to write that escaping straight into the catalog. Left
+    escaped, the value could never be reached through --btype: the flag
+    validates against the unescaped form the schema stores, and the catalog's
+    exact-value filter then matched nothing -- a silent zero-hit query rather
+    than an error, which schema check surfaces as an 'unseen-value' anomaly.
+    This asserts the packaged catalog carries no such gap, so a re-escaped
+    value would fail this test rather than only showing up as a `schema check`
+    anomaly a maintainer has to notice.
+    """
+
+    def test_every_paired_form_value_is_reachable_in_the_catalog(self):
+        snapshot = Drift.loadSnapshotDir('oas')
+        findings = Drift.findAnomalies(snapshot)
+
+        unseen = [x for x in findings if x.category == 'unseen-value'
+                 and x.collection == 'paired']
+
+        self.assertEqual(unseen, [],
+                         'a paired form value matches no cataloged unit -- see '
+                         'if a detail-page value needs unescapeOption applied')
+
+
 class TestReporting(unittest.TestCase):
     """
     Tests for report assembly and rendering

@@ -394,6 +394,35 @@ class TestCatalogEnrichment(unittest.TestCase):
 
         self.assertEqual(len(client.urls), 1)
 
+    def test_a_value_with_an_escaped_comma_is_unescaped(self):
+        """
+        Detail pages escape a comma the same way the search form does.
+
+        Left escaped, a value like BType's 'Plasmablasts\\, Memory B cells and
+        activated T cells' can never match --btype's validated (unescaped)
+        filter: Catalog.filterCatalog does an exact-value comparison, so the
+        search would silently return zero hits -- the failure mode the
+        snapshot's validated filters exist to prevent. Built inline, as a
+        synthetic page, rather than a second committed detail-page fixture,
+        since the point being pinned is entirely in this one cell.
+        """
+        page = ('<html><body><table>'
+               '<tr><td>BType</td>'
+               '<td>Plasmablasts\\, Memory B cells and activated T cells</td></tr>'
+               '</table></body></html>')
+
+        found = Oas.parseDetailPage(page)
+
+        self.assertEqual(found['BType'],
+                         'Plasmablasts, Memory B cells and activated T cells')
+
+        rows = self.makeRows()
+        source = Oas.OasSource(StubDetailClient(page))
+        source.enrichCatalog(rows, force=True)
+
+        self.assertEqual(rows[0]['BType'],
+                         'Plasmablasts, Memory B cells and activated T cells')
+
 
 class TestKnownFields(unittest.TestCase):
     """

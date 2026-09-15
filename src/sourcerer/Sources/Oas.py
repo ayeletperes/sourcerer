@@ -406,7 +406,13 @@ def parseDetailPage(html):
             continue
 
         label = cells[0].get_text().strip().rstrip(':')
-        value = cells[1].get_text().strip()
+        # Detail pages escape a comma inside a value (e.g. BType's
+        # 'Plasmablasts\, Memory B cells and activated T cells') the same way
+        # the search form does, so it must be undone the same way: unescaped,
+        # a value like that can never match --btype's validated (unescaped)
+        # filter, and the exact-match lookup in Catalog.filterCatalog silently
+        # returns zero hits -- the failure mode the snapshot exists to prevent.
+        value = unescapeOption(cells[1].get_text())
         if label and value:
             found[FIELD_ALIASES.get(label, label)] = value
 

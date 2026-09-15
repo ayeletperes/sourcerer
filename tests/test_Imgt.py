@@ -139,5 +139,136 @@ class TestBuildReference(unittest.TestCase):
             self.assertEqual(len(report.written), 1)
 
 
+class TestArchivePin(unittest.TestCase):
+    """
+    Tests for re-downloading a pinned release from the genedb-releases archive
+    """
+
+    class Listing:
+        def __init__(self, names):
+            self.payload = [{'name': n, 'type': 'dir'} for n in names]
+
+        def json(self):
+            return self.payload
+
+    class ListingClient:
+        def __init__(self, names):
+            self.names = names
+
+        def get(self, url):
+            return TestArchivePin.Listing(self.names)
+
+    def test_pinned_search_yields_archive_bulk_units(self):
+        """A pinned release resolves to the nucleotide and amino acid bulk files."""
+        source = ImgtSource(client=self.ListingClient(
+            ['2026-08-03_GENEDB_202631-7']))
+        source.pinRelease('202631-7')
+        units = source.searchUnits(Query(collection='human',
+                                         filters={'locus': '*', 'segment': '*'}))
+        self.assertEqual({u.metadata['group'] for u in units}, {'nt', 'aa'})
+        self.assertTrue(all(u.metadata['archive'] == 'genedb' for u in units))
+        self.assertTrue(all(u.metadata['release'] == '202631-7' for u in units))
+
+    def test_archive_units_can_be_narrowed_to_chains_and_groups(self):
+        """A caller wanting part of the reference fetches one bulk file, filtered."""
+        source = ImgtSource(client=self.ListingClient(
+            ['2026-08-03_GENEDB_202631-7']))
+        source.pinRelease('202631-7')
+        units = source.archiveUnits('human', chains=('TRAV', 'IGKC'),
+                                    groups=('nt',))
+        self.assertEqual(len(units), 1)
+        self.assertEqual(units[0].metadata['group'], 'nt')
+        self.assertEqual(units[0].metadata['chains'], ['IGKC', 'TRAV'])
+
+    def test_a_substituted_release_is_recorded_as_a_substitute(self):
+        """The archive lacking the wanted release is recorded, not papered over."""
+        import yaml
+
+        source = ImgtSource(client=self.ListingClient(
+            ['2026-08-03_GENEDB_202631-7']))
+        source.pinRelease('202629-7')          # not archived
+        units = source.searchUnits(Query(collection='human',
+                                         filters={'locus': '*', 'segment': '*'}))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            source.writeReferenceMetadata(tmp, units)
+            record = yaml.safe_load((tmp / 'IMGT.yaml').read_text())
+        entry = record['species']['human']
+        self.assertEqual(entry['release'], '202631-7')
+        self.assertEqual(entry['requested'], '202629-7')
+        self.assertFalse(entry['exact'])
+
+    def test_build_from_archive_splits_the_bulk_into_chains(self):
+        """A bulk file is filtered and split into per-chain reference FASTAs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bulk = tmp / 'nt.fasta'
+            bulk.write_text(
+                '>X1|IGHV1-2*02|Homo sapiens|F\nAC.GT\n'
+                '>X2|IGHJ4*02|Homo sapiens|F\nACTG\n'
+                '>X3|MICA*01|Homo sapiens|F\nGGGG\n')  # dropped: not IG/TR
+            unit = DataUnit(
+                unit_id='genedb/human_nt.fasta', collection='human', url='x',
+                metadata={'species': 'human', 'archive': 'genedb', 'group': 'nt'})
+
+            source = ImgtSource(client=None)
+            source.buildReference([(unit, bulk)], tmp / 'reference_base')
+
+            base = tmp / 'reference_base' / 'human'
+            self.assertTrue((base / 'vdj' / 'imgt_human_IGHV.fasta').exists())
+            self.assertTrue((base / 'vdj' / 'imgt_human_IGHJ.fasta').exists())
+            self.assertFalse(list((base / 'constant').glob('*MIC*'))
+                             if (base / 'constant').exists() else [])
+
+
+class TestReleaseCapture(unittest.TestCase):
+    """
+    Tests for when the recorded GENE-DB release is read
+    """
+
+    class RollingClient:
+        """A client whose release tag changes, as IMGT's does when it rebuilds."""
+
+        def __init__(self, release):
+            self.release = release
+
+        def get(self, url):
+            holder = type('R', (), {'text': self.release})
+
+            return holder()
+
+    def test_release_is_the_one_current_when_the_download_started(self):
+        """
+        A rebuild part way through must not be recorded as the release fetched.
+
+        GENElect serves only the current build, so the tag read after a download
+        may name a release whose sequences were never the ones written. Reading
+        it when the units are resolved ties the record to what was fetched.
+        """
+        import yaml
+
+        client = self.RollingClient('202631-7')
+        source = ImgtSource(client=client)
+        units = source.searchUnits(Query(collection='human',
+                                         filters={'locus': 'IGH', 'segment': 'V'}))
+        client.release = '202632-7'      # IMGT rebuilds mid-download
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            source.writeReferenceMetadata(tmp, units)
+            record = yaml.safe_load((tmp / 'IMGT.yaml').read_text())
+
+        entry = record['species']['human']
+        self.assertEqual(entry['release'], '202631-7')
+        self.assertNotIn('requested', entry)    # nothing was pinned
+
+    def test_no_units_writes_no_sidecar(self):
+        """A source that fetched nothing has no release to record."""
+        source = ImgtSource(client=self.RollingClient('202631-7'))
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(source.writeReferenceMetadata(Path(tmp), []), [])
+            self.assertFalse((Path(tmp) / 'IMGT.yaml').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

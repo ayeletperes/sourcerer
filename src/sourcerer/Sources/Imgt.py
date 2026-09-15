@@ -21,12 +21,13 @@ __author__ = 'Ayelet Peres'
 
 # Imports
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
 # Sourcerer imports
+from sourcerer import Genedb, Reference
 from sourcerer.Exceptions import ImgtParseError
 from sourcerer.Reference import (
     KIND_AA,
@@ -37,6 +38,7 @@ from sourcerer.Reference import (
 )
 from sourcerer.Sources.Base import DataUnit
 from sourcerer.Sources.Germline import ReferenceSource
+from sourcerer.Version import __version__
 
 log = logging.getLogger(__name__)
 
@@ -146,7 +148,7 @@ def extractFasta(html, species):
     return text
 
 
-def _chainPlan(species):
+def chainPlan(species):
     """
     Enumerate every (chain, kind, query, locus, segment) this source fetches.
 
@@ -196,6 +198,24 @@ class ImgtSource(ReferenceSource):
         'ImMunoGeneTics information system 25 years on. Nucleic Acids Res. '
         '2015;43(Database issue):D413-D422. doi:10.1093/nar/gku1056',
     )
+
+    #: When set, a release tag to reconstruct from the genedb-releases archive
+    #: instead of fetching the current release from GENElect. `_resolved` is the
+    #: release actually used -- the one found in the archive, which may be the
+    #: nearest neighbour, or the current GENElect release read at search time --
+    #: and `_exact` says whether the archive held the release that was asked for.
+    release = None
+    _resolved = None
+    _exact = True
+
+    def pinRelease(self, release):
+        """
+        Reconstruct a past release from the archive rather than fetch the current.
+
+        Arguments:
+          release (str): the IMGT GENE-DB release tag, e.g. '202631-7'.
+        """
+        self.release = release
 
     def harvestSchema(self):
         """
@@ -258,11 +278,20 @@ class ImgtSource(ReferenceSource):
           list: DataUnit objects, one per germline file.
         """
         species = query.collection
+        if self.release is not None:
+            return self.archiveUnits(species, limit=query.limit)
+
+        # Read now rather than when the metadata is written: GENElect serves only
+        # the current build, so a release that rolls over mid-download would
+        # otherwise be recorded as the one the files came from when it is not.
+        if self._resolved is None:
+            self._resolved = self.fetchRelease()
+
         locus = query.filters.get('locus', '*')
         segment = query.filters.get('segment', '*')
 
         units = []
-        for item in _chainPlan(species):
+        for item in chainPlan(species):
             if locus not in ('*', item['locus']):
                 continue
             if segment not in ('*', item['segment']):
@@ -281,9 +310,46 @@ class ImgtSource(ReferenceSource):
 
         return units
 
+    def archiveUnits(self, species, chains=None, groups=None, limit=None):
+        """
+        Resolve the pinned release to genedb-releases bulk files to fetch.
+
+        One unit per group (nucleotide and amino acid); each is a whole-species
+        bulk file that buildReference filters down to this species' chains.
+
+        The archive has no per-chain files to pick from the way GENElect does, so
+        a caller that wants only part of the reference -- the airrc-imgt blend
+        takes only the gap IMGT fills -- says so here: the chains it wants are
+        carried on the unit and applied when the bulk file is split, and the
+        groups it needs keep the other bulk file from being fetched at all.
+
+        Arguments:
+          species (str): the species.
+          chains (iterable): the chains to keep when the bulk file is split, or
+            None for every chain the archive holds for the species.
+          groups (iterable): the bulk groups to fetch, or None for all of them.
+          limit (int): a unit cap, or None.
+
+        Returns:
+          list: DataUnit objects for the resolved release.
+        """
+        dirname, resolved, exact = Genedb.resolveRelease(self.client, self.release)
+        self._resolved, self._exact = resolved, exact
+
+        keep = sorted(chains) if chains is not None else None
+        units = []
+        for group in (Genedb.GROUPS if groups is None else groups):
+            units.append(DataUnit(
+                unit_id='genedb/%s_%s.fasta' % (species, group),
+                collection=species, url=Genedb.bulkUrl(dirname, group),
+                metadata={'species': species, 'archive': 'genedb',
+                          'group': group, 'release': resolved, 'chains': keep}))
+
+        return units[:limit] if limit is not None else units
+
     def buildReference(self, entries, reference_dir):
         """
-        Extract each downloaded GENElect page into the reference tree.
+        Extract each downloaded germline file into the reference tree.
 
         Arguments:
           entries (list): (DataUnit, Path) pairs from the fetch step.
@@ -292,6 +358,9 @@ class ImgtSource(ReferenceSource):
         Returns:
           ReferenceReport: the files written.
         """
+        if entries and entries[0][0].metadata.get('archive') == 'genedb':
+            return self._buildFromArchive(entries, reference_dir)
+
         report = ReferenceReport()
         for unit, path in entries:
             html = path.read_text()
@@ -304,3 +373,57 @@ class ImgtSource(ReferenceSource):
             log.info('%s: %d sequences', written.name, len(records))
 
         return report
+
+    def _buildFromArchive(self, entries, reference_dir):
+        """
+        Split each genedb-releases bulk file into per-chain reference FASTAs.
+
+        Arguments:
+          entries (list): (DataUnit, Path) pairs, one per bulk file.
+          reference_dir (Path): the reference_base root.
+
+        Returns:
+          ReferenceReport: the files written.
+        """
+        report = ReferenceReport()
+        for unit, path in entries:
+            species = unit.metadata['species']
+            is_aa = unit.metadata['group'] == 'aa'
+            keep = unit.metadata.get('chains')
+            chains = Genedb.selectChains(path.read_text(), species, is_aa)
+            for (chain, kind), records in sorted(chains.items()):
+                if keep is not None and chain not in keep:
+                    continue
+                written = self.writeChain(reference_dir, species, kind, chain,
+                                          records)
+                report.written.append((chain, written))
+                log.info('%s: %d sequences', written.name, len(records))
+
+        return report
+
+    def writeReferenceMetadata(self, reference_dir, units):
+        """
+        Write IMGT.yaml recording the release this reference was built from.
+
+        A caller that fetched nothing from IMGT -- the airrc-imgt blend under a
+        --limit small enough to cut the IMGT half off -- has no release to
+        record, so nothing is written rather than an empty sidecar.
+
+        Arguments:
+          reference_dir (Path): the reference_base root.
+          units (list): the DataUnits fetched, for the species present.
+
+        Returns:
+          list: the metadata files written.
+        """
+        if not units:
+            return []
+
+        species = sorted({unit.metadata['species'] for unit in units})
+        release = self._resolved or self.fetchRelease()
+        path = Reference.writeImgtMetadata(
+            reference_dir, species, release,
+            datetime.now(UTC).strftime('%Y-%m-%d'), 'sourcerer %s' % __version__,
+            requested=self.release, exact=self._exact)
+
+        return [path]

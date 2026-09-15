@@ -1,6 +1,14 @@
 sourcerer
 ================================================================================
 
+.. image:: https://img.shields.io/badge/lifecycle-experimental-orange.svg
+    :target: https://www.tidyverse.org/lifecycle/#experimental
+    :alt: Lifecycle: experimental
+
+**Experimental.** This is early-stage, unreleased software. Breaking changes --
+including changes to the package name -- can and will happen without notice.
+Do not depend on it for production pipelines yet.
+
 ``sourcerer`` downloads data from online immune repertoire databases and formats
 it for use with the Immcantation_ framework and `nf-core/airrflow`_. Each
 external source is a module, and sources come in two kinds:

@@ -17,6 +17,7 @@ API
    modules/Airrflow
    modules/Ncbi
    modules/Reference
+   modules/Genedb
    modules/Provenance
    modules/Gzip
    modules/Exceptions

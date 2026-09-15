@@ -23,10 +23,10 @@ import logging
 from datetime import UTC
 
 # Sourcerer imports
-from sourcerer.Reference import KIND_AA, ReferenceReport
+from sourcerer.Reference import KIND_AA, KIND_CONSTANT, ReferenceReport
 from sourcerer.Sources.Base import Query
 from sourcerer.Sources.Germline import ReferenceSource
-from sourcerer.Sources.Imgt import ImgtSource
+from sourcerer.Sources.Imgt import ImgtSource, chainPlan
 from sourcerer.Sources.Ogrdb import OgrdbSource
 
 log = logging.getLogger(__name__)
@@ -118,13 +118,45 @@ class AirrcImgtSource(ReferenceSource):
 
         return units
 
+    def _imgtGapChains(self, species):
+        """
+        Name what IMGT fills in for this blend.
+
+        That is every T-cell receptor chain, and the immunoglobulin constants
+        without an OGRDB set; the immunoglobulin V, D and J come from OGRDB, and
+        amino acid V is not part of this blend. A chain is named with its kind
+        because IMGT fetches some of them twice -- TRAV is both a nucleotide V
+        and a translated one -- and only the nucleotide half belongs here.
+
+        Arguments:
+          species (str): the species.
+
+        Returns:
+          set: the (chain, kind) pairs to take from IMGT.
+        """
+        constants = IMGT_IG_CONSTANTS.get(species, ())
+        gap = set()
+        for item in chainPlan(species):
+            if item['kind'] == KIND_AA:
+                continue
+            if item['locus'].startswith('TR'):
+                gap.add((item['chain'], item['kind']))
+            elif item['kind'] == KIND_CONSTANT and item['chain'] in constants:
+                gap.add((item['chain'], item['kind']))
+
+        return gap
+
     def _imgtGapUnits(self, species):
         """
         Pick the IMGT files that fill what OGRDB does not cover.
 
-        That is every T-cell receptor chain, and the immunoglobulin constants
-        without an OGRDB set; the immunoglobulin V, D and J come from OGRDB, and
-        amino acid V is not part of this blend.
+        The chains wanted are the same either way, but they are selected
+        differently: GENElect serves one file per chain, so the unwanted ones are
+        simply not fetched, while a pinned release comes from the genedb-releases
+        archive as whole-species bulk files, which are fetched once and filtered
+        when they are split. Fetching the bulk file per chain would download the
+        whole reference a dozen times over, and taking it unfiltered would
+        overwrite the immunoglobulin V, D and J that OGRDB is here to provide.
 
         Arguments:
           species (str): the species.
@@ -132,20 +164,18 @@ class AirrcImgtSource(ReferenceSource):
         Returns:
           list: DataUnit objects from the IMGT source.
         """
-        constants = IMGT_IG_CONSTANTS.get(species, ())
-        gap = []
-        for unit in self._imgt.searchUnits(
-                Query(collection=species,
-                      filters={'locus': '*', 'segment': '*'})):
-            meta = unit.metadata
-            if meta['kind'] == KIND_AA:
-                continue
-            if meta['locus'].startswith('TR'):
-                gap.append(unit)
-            elif meta['kind'] == 'constant' and meta['chain'] in constants:
-                gap.append(unit)
+        wanted = self._imgtGapChains(species)
+        if self._imgt.release is not None:
+            # The nucleotide bulk file is the only group fetched, so the kind
+            # half of each pair is already settled and only the chain is needed.
+            return self._imgt.archiveUnits(
+                species, chains={chain for chain, _kind in wanted},
+                groups=('nt',))
 
-        return gap
+        return [unit for unit in self._imgt.searchUnits(
+                    Query(collection=species,
+                          filters={'locus': '*', 'segment': '*'}))
+                if (unit.metadata['chain'], unit.metadata['kind']) in wanted]
 
     def buildReference(self, entries, reference_dir):
         """
@@ -170,3 +200,32 @@ class AirrcImgtSource(ReferenceSource):
             self._imgt.buildReference(imgt_entries, reference_dir).written)
 
         return report
+
+    def writeReferenceMetadata(self, reference_dir, units):
+        """
+        Write both sidecars: AIRRC.yaml for the OGRDB sets, IMGT.yaml for the gap.
+
+        Arguments:
+          reference_dir (Path): the reference_base root.
+          units (list): the fetched DataUnits, each tagged with its source.
+
+        Returns:
+          list: the metadata files written by both sources.
+        """
+        ogrdb_units = [u for u in units if u.metadata.get(VIA) == self._ogrdb.name]
+        imgt_units = [u for u in units if u.metadata.get(VIA) == self._imgt.name]
+
+        return (self._ogrdb.writeReferenceMetadata(reference_dir, ogrdb_units)
+                + self._imgt.writeReferenceMetadata(reference_dir, imgt_units))
+
+    def pinRelease(self, release):
+        """Pin the IMGT half of the blend to a release."""
+        self._imgt.pinRelease(release)
+
+    def pinSets(self, sets):
+        """Pin the OGRDB half of the blend to specific set versions."""
+        self._ogrdb.pinSets(sets)
+
+    def enableDoi(self):
+        """Resolve DOIs for the OGRDB half of the blend."""
+        self._ogrdb.enableDoi()

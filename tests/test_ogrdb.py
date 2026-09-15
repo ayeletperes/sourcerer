@@ -177,6 +177,114 @@ class TestBuildReference(unittest.TestCase):
             self.assertNotIn('.', j)              # J is taken ungapped
 
 
+class TestPinningAndMetadata(unittest.TestCase):
+    """
+    Tests for --from version pinning and the AIRRC.yaml sidecar
+    """
+
+    def test_search_uses_latest_by_default(self):
+        """With no pin, a set is fetched at its latest version and date."""
+        source = OgrdbSource(client=StubClient())
+        unit = source.searchUnits(Query(collection='human',
+                                        filters={'locus': 'IGK'}))[0]
+        self.assertEqual(unit.metadata['version'], '2')
+        self.assertEqual(unit.metadata['release_date'], '2024-06-01')
+
+    def test_pin_overrides_the_version_and_date(self):
+        """A pinned set is fetched at its recorded version, not the latest."""
+        source = OgrdbSource(client=StubClient())
+        source.pinSets([{'set': 'IGKappa_VJ', 'version': '1',
+                         'release_date': '2020-01-01'}])
+        unit = source.searchUnits(Query(collection='human',
+                                        filters={'locus': 'IGK'}))[0]
+        self.assertEqual(unit.metadata['version'], '1')
+        self.assertEqual(unit.metadata['release_date'], '2020-01-01')
+        self.assertIn('/9606.IGK/1/', unit.url)
+
+    def test_metadata_has_one_entry_per_set(self):
+        """AIRRC.yaml carries one record per set, not one per download form."""
+        import yaml
+
+        source = OgrdbSource(client=StubClient())
+        units = source.searchUnits(Query(collection='human',
+                                         filters={'locus': 'IGH'}))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            source.writeReferenceMetadata(tmp, units)
+            record = yaml.safe_load((tmp / 'AIRRC.yaml').read_text())
+            names = {s['set'] for s in record['sets']}
+            self.assertEqual(names, {'IGH_VDJ', 'IGHC'})
+            self.assertEqual(record['sets'][0]['release_date'], '2024-06-01')
+
+    def test_a_set_missing_from_the_pins_warns_before_taking_latest(self):
+        """A part-pinned reference is what --from exists to avoid, so it is said."""
+        source = OgrdbSource(client=StubClient())
+        source.pinSets([{'set': 'IGH_VDJ', 'version': '1',
+                         'release_date': '2020-01-01'}])
+        with self.assertLogs('sourcerer.Sources.Ogrdb', level='WARNING') as logged:
+            units = source.searchUnits(Query(collection='human',
+                                             filters={'locus': 'IGH'}))
+        self.assertTrue(any('IGHC' in line for line in logged.output))
+        pinned = {u.metadata['set_name']: u.metadata['version'] for u in units}
+        self.assertEqual(pinned['IGH_VDJ'], '1')      # pinned
+        self.assertNotEqual(pinned['IGHC'], '1')      # fell back to latest
+
+    def test_enable_doi_is_off_until_asked_for(self):
+        """DOI resolution scrapes a web UI, so it is opt-in."""
+        source = OgrdbSource(client=None)
+        self.assertFalse(source._resolve_doi)
+        source.enableDoi()
+        self.assertTrue(source._resolve_doi)
+
+    def test_pin_release_is_rejected_for_ogrdb(self):
+        """OGRDB cannot pin an IMGT release; asking is a clear error."""
+        from sourcerer.Exceptions import SourcererError
+
+        with self.assertRaises(SourcererError):
+            OgrdbSource(client=None).pinRelease('202631-7')
+
+
+class TestDoi(unittest.TestCase):
+    """
+    Tests for the opt-in Zenodo DOI resolver
+    """
+
+    class Text:
+        def __init__(self, text):
+            self.text = text
+
+    class DoiClient:
+        PAGE = ('<input name="csrf_token" type="hidden" value="TOK">')
+        TABLE = ('<table><tr>'
+                 '<td>IGH_VDJ</td><td>10</td><td>2026-05-27</td>'
+                 '<td><a href="https://doi.org/10.5281/zenodo.20409587">x</a></td>'
+                 '</tr></table>')
+
+        def __init__(self):
+            self.posted = None
+
+        def get(self, url):
+            return TestDoi.Text(self.PAGE)
+
+        def post(self, url, data=None):
+            self.posted = data
+            return TestDoi.Text(self.TABLE)
+
+    def test_resolves_doi_and_zenodo_id_from_the_matching_row(self):
+        """The row matching set, version and date yields the DOI and record id."""
+        source = OgrdbSource(client=self.DoiClient())
+        found = source.resolveDoi('Homo sapiens', 'IGH_VDJ', '10', '2026-05-27')
+        self.assertEqual(found['doi'], '10.5281/zenodo.20409587')
+        self.assertEqual(found['zenodo_record_id'], '20409587')
+        self.assertIn('20409587', found['zenodo_url'])
+
+    def test_no_matching_row_returns_empty_not_error(self):
+        """A version the page does not list resolves to nothing, not a crash."""
+        source = OgrdbSource(client=self.DoiClient())
+        self.assertEqual(source.resolveDoi('Homo sapiens', 'IGH_VDJ', '99',
+                                           '2026-05-27'), {})
+
+
 class TestAlias(unittest.TestCase):
     """
     Tests for the airrc alias

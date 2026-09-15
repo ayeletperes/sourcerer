@@ -115,5 +115,75 @@ class TestBuildReference(unittest.TestCase):
             self.assertTrue((vdj / 'imgt_human_IGHD.fasta').exists())
 
 
+class TestPinnedBlend(unittest.TestCase):
+    """
+    Tests for the blend under a --from pin, where IMGT comes from the archive
+    """
+
+    class Listing:
+        def __init__(self, names):
+            self.payload = [{'name': n, 'type': 'dir'} for n in names]
+
+        def json(self):
+            return self.payload
+
+    class ListingClient:
+        def __init__(self, names):
+            self.names = names
+
+        def get(self, url):
+            return TestPinnedBlend.Listing(self.names)
+
+    def pinnedSource(self):
+        """A blend whose IMGT half is pinned to an archived release."""
+        source = AirrcImgtSource(client=StubClient())
+        source._imgt.client = self.ListingClient(['2026-08-03_GENEDB_202631-7'])
+        source.pinRelease('202631-7')
+
+        return source
+
+    def test_pinned_gap_resolves_to_the_nucleotide_bulk_file(self):
+        """The gap becomes one archive unit, not a per-chain GENElect fetch."""
+        gap = self.pinnedSource()._imgtGapUnits('human')
+        self.assertEqual(len(gap), 1)
+        self.assertEqual(gap[0].metadata['group'], 'nt')
+        self.assertEqual(gap[0].metadata['archive'], 'genedb')
+
+    def test_pinned_gap_keeps_only_what_ogrdb_does_not_cover(self):
+        """The chain filter carries the gap: TR and the light constants only."""
+        gap = self.pinnedSource()._imgtGapUnits('human')
+        chains = set(gap[0].metadata['chains'])
+        self.assertEqual({c for c in chains if c.startswith('IG')},
+                         {'IGKC', 'IGLC'})
+        self.assertIn('TRAV', chains)
+        # The immunoglobulin V, D and J are OGRDB's; taking them from the bulk
+        # file would overwrite the sets the blend exists to use.
+        self.assertFalse({'IGHV', 'IGHD', 'IGHJ', 'IGKV', 'IGLV'} & chains)
+
+    def test_pinned_build_writes_only_the_gap_chains(self):
+        """Building the bulk file writes the gap and leaves OGRDB's chains alone."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bulk = tmp / 'nt.fasta'
+            bulk.write_text(
+                '>X1|IGHV1-2*02|Homo sapiens|F\nAC.GT\n'
+                '>X2|TRAV1-1*01|Homo sapiens|F\nACTG\n')
+            source = self.pinnedSource()
+            unit = source._imgtGapUnits('human')[0]
+            unit.metadata['via'] = 'imgt'
+
+            source.buildReference([(unit, bulk)], tmp / 'reference_base')
+
+            vdj = tmp / 'reference_base' / 'human' / 'vdj'
+            self.assertTrue((vdj / 'imgt_human_TRAV.fasta').exists())
+            self.assertFalse((vdj / 'imgt_human_IGHV.fasta').exists())
+
+    def test_gap_chains_exclude_the_translated_v(self):
+        """TRAV is wanted as nucleotide only, never as the amino acid file."""
+        gap = AirrcImgtSource(client=StubClient())._imgtGapChains('human')
+        self.assertIn(('TRAV', 'vdj'), gap)
+        self.assertNotIn(('TRAV', 'vdj_aa'), gap)
+
+
 if __name__ == '__main__':
     unittest.main()

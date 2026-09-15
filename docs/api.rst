@@ -14,6 +14,7 @@ API
    modules/Convert
    modules/Airrflow
    modules/Reference
+   modules/Genedb
    modules/Provenance
    modules/Gzip
    modules/Exceptions

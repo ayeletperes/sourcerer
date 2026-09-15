@@ -29,6 +29,11 @@ log = logging.getLogger('sourcerer')
 #: Output formats the download and convert subcommands can produce.
 FORMATS = ('raw', 'airr', 'fasta')
 
+#: Pseudo-collection for germline sources: fetch every species sourcerer supports
+#: into one reference_base. Not offered for OAS (its collections are paired and
+#: unpaired, not species) nor for search (two species would merge two hit lists).
+ALL_SPECIES = 'all'
+
 #: Above this many values, a filter flag's help lists only a sample instead of
 #: everything, and points at `schema show` for the rest. Enumerated fields are
 #: categorical (species, disease, ...), so in practice this rarely bites; it
@@ -185,6 +190,42 @@ def _addReferenceParser(commands):
                        default=None,
                        help='limit to these species; default is every species '
                             'found in the folder')
+    build.add_argument('--map', dest='map_file', type=Path, default=None,
+                       metavar='MANIFEST', help='a manifest declaring the species and chain of files whose names do not say, one per line: <file> <species> <CHAIN> [aa]. It overrides the naming rule, so it can also correct a file the rule misreads')
+
+    diff = actions.add_parser(
+        'diff', help='compare two germline reference folders allele by allele',
+        description='Compare two reference folders allele by allele and report '
+                    'what is identical, added, removed or changed. Files are '
+                    'matched by name in any layout, and sequences are compared '
+                    'without gaps, so a gapped and an ungapped copy of the same '
+                    'allele are not a false difference. Exits non-zero when the '
+                    'two references differ.',
+        formatter_class=CommonHelpFormatter)
+    diff.add_argument('reference_a', type=Path,
+                      help='the baseline reference folder')
+    diff.add_argument('reference_b', type=Path,
+                      help='the reference folder to compare against it')
+    diff.add_argument('--species', nargs='+', choices=list(Reference.SPECIES),
+                      default=None,
+                      help='limit to these species; default is every species '
+                           'found in either folder')
+    diff.add_argument('--map', dest='map_file', type=Path, default=None,
+                      metavar='MANIFEST', help='a manifest declaring the species and chain of files whose names do not say, one per line: <file> <species> <CHAIN> [aa]. It overrides the naming rule, so it can also correct a file the rule misreads')
+
+    show = actions.add_parser(
+        'show', help='report what a reference folder is and where it came from',
+        description='Read a reference folder\'s provenance sidecars -- '
+                    'IMGT.yaml, AIRRC.yaml and sourcerer_build.yaml -- and '
+                    'report the release and sets it was built from, what was '
+                    'built, and what the folder holds. Accepts a reference_base, '
+                    'a directory containing one, or an igblast_base, which '
+                    'carries copies of the same sidecars.',
+        formatter_class=CommonHelpFormatter)
+    show.add_argument('folder', type=Path,
+                      help='the reference folder to describe')
+    show.add_argument('--map', dest='map_file', type=Path, default=None,
+                      metavar='MANIFEST', help='a manifest declaring the species and chain of files whose names do not say, one per line: <file> <species> <CHAIN> [aa]. It overrides the naming rule, so it can also correct a file the rule misreads')
 
 
 def _addSchemaParser(commands):
@@ -274,16 +315,26 @@ def _addSourceParser(commands, name, source):
         collections = action_parser.add_subparsers(dest='collection',
                                                    metavar='COLLECTION',
                                                    required=True)
-        for collection in source.collections:
+        names = list(source.collections)
+        if action == 'download' and source.output == 'reference' and len(names) > 1:
+            names.append(ALL_SPECIES)
+
+        for collection in names:
             # Passing help is what makes argparse list the collection at all.
-            collection_help = source.collection_help.get(collection)
+            collection_help = source.collection_help.get(
+                collection,
+                'every species sourcerer supports for this source (%s), into '
+                'one reference_base. Not every species the source publishes'
+                % ', '.join(source.collections))
             leaf = collections.add_parser(
                 collection, help=collection_help,
                 description='%s the %s collection (%s), optionally narrowed '
                             'down with the filter flags below.'
                             % (action.capitalize(), collection, collection_help),
                 formatter_class=CommonHelpFormatter)
-            addFilterArgs(leaf, schema, name, collection)
+            addFilterArgs(leaf, schema, name,
+                           source.collections[0] if collection == ALL_SPECIES
+                           else collection)
             leaf.add_argument('--limit', type=int, default=None,
                               help='stop after this many units')
             if action == 'search':
@@ -308,6 +359,22 @@ def _addSourceParser(commands, name, source):
                     leaf.add_argument('--igblast-out', type=Path, default=None,
                                       help='where to write igblast_base; '
                                            'defaults to <outdir>/igblast_base')
+                    leaf.add_argument('--from', dest='from_ref', type=Path,
+                                      default=None, metavar='REFERENCE',
+                                      help='re-download the versions pinned in a '
+                                           'reference_base (its IMGT.yaml / '
+                                           'AIRRC.yaml), or one of those files, '
+                                           'instead of the latest')
+                    leaf.add_argument('--compare', type=Path, default=None,
+                                      metavar='REFERENCE',
+                                      help='after building, compare the result '
+                                           'allele by allele against this '
+                                           'reference folder and report; a '
+                                           'difference is a non-zero exit')
+                    leaf.add_argument('--resolve-doi', action='store_true',
+                                      help='resolve each OGRDB set\'s Zenodo DOI '
+                                           'into AIRRC.yaml (scrapes the OGRDB '
+                                           'web UI; ignored by imgt)')
                 else:
                     leaf.add_argument('--format', action='append', dest='formats',
                                       choices=FORMATS,
@@ -319,6 +386,13 @@ def _addSourceParser(commands, name, source):
                     leaf.add_argument('--strict-airr', action='store_true',
                                       help='drop columns the AIRR schema does '
                                            'not define')
+
+
+#: Request delay for the IgBLAST support mirror. The default is cautious because
+#: IMGT and OGRDB are small academic servers; NCBI's file server and GitHub's raw
+#: host are bulk services, and the mirror alone makes 100+ requests, so the
+#: default would spend most of a build asleep rather than transferring.
+MIRROR_DELAY = 0.05
 
 
 def makeClient(args):
@@ -443,12 +517,54 @@ def handleSearch(args):
     return 0
 
 
+def loadMap(args):
+    """
+    Read the --map manifest, if one was given.
+
+    Arguments:
+      args (Namespace): parsed arguments.
+
+    Returns:
+      dict: the manifest, or None.
+    """
+    if getattr(args, 'map_file', None) is None:
+        return None
+
+    return Reference.loadReferenceMap(args.map_file)
+
+
+def handleReferenceDiff(args):
+    """Compare two reference folders and report; non-zero exit if they differ."""
+    for folder in (args.reference_a, args.reference_b):
+        if not folder.is_dir():
+            raise SourcererError('no such reference folder: %s' % folder)
+
+    diff = Reference.diffReference(args.reference_a, args.reference_b,
+                                   species=args.species, mapping=loadMap(args))
+    print(diff.summary())
+
+    return 0 if diff.same else 1
+
+
+def handleReferenceShow(args):
+    """Report what a reference folder is and where it came from."""
+    print(Reference.describeReference(args.folder, mapping=loadMap(args)))
+
+    return 0
+
+
 def handleReference(args):
     """Validate a reference folder and, unless --check, build its IgBLAST base."""
+    if args.action == 'diff':
+        return handleReferenceDiff(args)
+    if args.action == 'show':
+        return handleReferenceShow(args)
+
     if not args.folder.is_dir():
         raise SourcererError('no such reference folder: %s' % args.folder)
 
-    plan = Reference.planReference(args.folder, species=args.species)
+    plan = Reference.planReference(args.folder, species=args.species,
+                                   mapping=loadMap(args))
     print(plan.summary())
 
     if not plan.ok:
@@ -462,47 +578,109 @@ def handleReference(args):
         raise SourcererError('--out is required to build; pass --check to only '
                              'validate the folder')
 
-    Reference.buildFromPlan(plan, args.out, makeClient(args))
+    report = Reference.buildFromPlan(plan, args.out, HttpClient(delay=MIRROR_DELAY))
+    for path in Reference.writeBuildMetadata(
+            args.out, report, args.folder, Provenance.timestamp()[:10],
+            'sourcerer %s' % __version__):
+        log.info('wrote %s', path)
     log.info('wrote %s', args.out)
 
     return 0
 
 
-def handleReferenceDownload(args, source):
-    """Download germline sets and build an airrflow reference_base."""
-    query = source.validateQuery(args.collection, collectFilters(args))
-    if args.limit is not None:
-        query = type(query)(collection=query.collection, filters=query.filters,
-                            limit=args.limit)
+def applyPins(source, from_ref, species):
+    """
+    Pin a reference source to the versions recorded in a reference_base.
 
-    units = source.searchUnits(query)
-    log.info('%d germline files for %s %s',
-             len(units), args.source, args.collection)
+    Reads the IMGT.yaml / AIRRC.yaml at --from and applies whichever pins the
+    source can act on, so an imgt source takes the IMGT release, an ogrdb source
+    the set versions, and the blend both. A --from whose pins none of the source
+    can use is a mistake worth stopping on rather than silently fetching latest.
+
+    Only the species being downloaded is read. A reference_base can hold several,
+    downloaded weeks apart from different releases, and pinning a mouse download
+    to human's release would quietly build something other than what was asked
+    for.
+
+    Arguments:
+      source (ReferenceSource): the source about to download.
+      from_ref (Path): a reference_base or an IMGT.yaml/AIRRC.yaml file.
+      species (str): the species being downloaded.
+    """
+    from sourcerer.Sources.Germline import ReferenceSource
+
+    pins = Reference.loadReferencePins(from_ref)
+    imgt, airrc = pins.get('imgt') or {}, pins.get('airrc') or {}
+    can_release = type(source).pinRelease is not ReferenceSource.pinRelease
+
+    applied = []
+    entry = (imgt.get('species') or {}).get(species) or {}
+    if entry.get('release') and can_release:
+        source.pinRelease(entry['release'])
+        applied.append('IMGT release %s' % entry['release'])
+
+    sets = [item for item in airrc.get('sets') or []
+            if item.get('species') == species]
+    if sets and hasattr(source, 'pinSets'):
+        source.pinSets(sets)
+        applied.append('%d OGRDB set version(s)' % len(sets))
+
+    if not applied:
+        raise SourcererError('the reference at %s records no %s versions that %s '
+                             'can re-download' % (from_ref, species, source.name))
+    log.info('re-downloading pinned: %s', '; '.join(applied))
+
+
+def handleReferenceDownload(args, source):
+    """Download one species, or all, and build an airrflow reference_base."""
+    species = (list(source.collections) if args.collection == ALL_SPECIES
+               else [args.collection])
+    if args.resolve_doi and hasattr(source, 'enableDoi'):
+        source.enableDoi()
+
+    outdir = Path(args.outdir)
+    reference_dir = outdir / 'reference_base'
+    provenance = []
+    # Each species is pinned, fetched and built on its own; the provenance
+    # sidecars merge across them, so several land in one reference_base.
+    for name in species:
+        if args.from_ref is not None:
+            applyPins(source, args.from_ref, name)
+        query = source.validateQuery(name, collectFilters(args))
+        if args.limit is not None:
+            query = type(query)(collection=query.collection,
+                                filters=query.filters, limit=args.limit)
+        units = source.searchUnits(query)
+        log.info('%d germline files for %s %s', len(units), args.source, name)
+        if args.dry_run:
+            for unit in units:
+                print('%-48s %s' % (unit.unit_id, unit.url))
+            continue
+        entries = []
+        for unit in units:
+            result = source.fetchUnit(unit, outdir / 'raw',
+                                      resume=not args.no_resume)
+            entries.append((unit, result.path))
+            provenance.append(Provenance.buildUnitRecord(unit, result, outdir, {}))
+        source.buildReference(entries, reference_dir).logSummary()
+        for path in source.writeReferenceMetadata(reference_dir, units):
+            log.info('wrote %s', path)
 
     if args.dry_run:
-        for unit in units:
-            print('%-48s %s' % (unit.unit_id, unit.url))
         log.info('dry run: nothing downloaded')
         return 0
 
-    outdir = Path(args.outdir)
-    raw_dir = outdir / 'raw'
-
-    entries, provenance = [], []
-    for unit in units:
-        result = source.fetchUnit(unit, raw_dir, resume=not args.no_resume)
-        entries.append((unit, result.path))
-        provenance.append(Provenance.buildUnitRecord(unit, result, outdir, {}))
-
-    reference_dir = outdir / 'reference_base'
-    source.buildReference(entries, reference_dir).logSummary()
     log.info('wrote %s', reference_dir)
 
     formats = ['reference']
     if args.igblast:
         igblast_out = args.igblast_out or (outdir / 'igblast_base')
-        Reference.buildIgblastBase(reference_dir, igblast_out, source.client,
-                                   species=[args.collection])
+        report = Reference.buildIgblastBase(reference_dir, igblast_out,
+                                            HttpClient(delay=MIRROR_DELAY),
+                                            species=species)
+        Reference.writeBuildMetadata(igblast_out, report, reference_dir,
+                                     Provenance.timestamp()[:10],
+                                     'sourcerer %s' % __version__)
         log.info('wrote %s', igblast_out)
         formats.append('igblast')
 
@@ -511,6 +689,16 @@ def handleReferenceDownload(args, source):
         formats, provenance, schema=source.schema, license=source.license,
         citation=source.citation)
     log.info('wrote %s', record)
+
+    if args.compare is not None:
+        if not args.compare.is_dir():
+            raise SourcererError('no such reference folder: %s' % args.compare)
+        diff = Reference.diffReference(args.compare, reference_dir,
+                                       species=species)
+        print(diff.summary())
+        if not diff.same:
+            log.warning('the built reference differs from %s', args.compare)
+            return 1
 
     return 0
 

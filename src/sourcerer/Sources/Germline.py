@@ -56,6 +56,26 @@ class ReferenceSource(SourceBase):
         """
         raise NotImplementedError
 
+    def writeReferenceMetadata(self, reference_dir, units):
+        """
+        Write the provenance sidecar for this reference, if the source has one.
+
+        The default writes nothing; IMGT and OGRDB override it to record the
+        release and set versions their reference_base was built from.
+
+        Arguments:
+          reference_dir (Path): the reference_base root.
+          units (list): the DataUnits fetched.
+
+        Returns:
+          list: the metadata files written.
+        """
+        return []
+
+    def pinRelease(self, release):
+        """Reconstruct a past release; a no-op for a source that cannot."""
+        raise SourcererError('%s cannot re-download a pinned release' % self.name)
+
     def writeChain(self, reference_dir, species, kind, chain, records):
         """
         Write one chain's FASTA into the reference tree.

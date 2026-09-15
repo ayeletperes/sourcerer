@@ -26,14 +26,18 @@ loses it.
 __author__ = 'Ayelet Peres'
 
 # Imports
+import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import tarfile
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+import yaml
 from bs4 import BeautifulSoup
 
 # Sourcerer imports
@@ -77,6 +81,23 @@ KIND_VDJ = 'vdj'
 KIND_CONSTANT = 'constant'
 KIND_AA = 'vdj_aa'
 
+#: The longest sequence identifier ``makeblastdb -parse_seqids`` accepts. A
+#: longer name is not a warning: makeblastdb refuses the whole database with
+#: "the local id is too long". Dropping -parse_seqids would lift the limit, but
+#: igblastn then reports gnl|BL_ORD_ID|0 instead of the gene name, which MakeDb
+#: cannot parse, so the name has to give instead.
+BLAST_NAME_LIMIT = 50
+
+#: Where a build records the names it had to shorten.
+RENAME_LOG = 'shortened_alleles.tsv'
+
+#: Provenance sidecars written inside reference_base, so they travel with the
+#: reference when airrflow moves the tree. IMGT records the release the FASTAs
+#: came from; AIRRC records each OGRDB set's version. `download --from <ref>`
+#: reads them back to re-download the same versions.
+IMGT_METADATA = 'IMGT.yaml'
+AIRRC_METADATA = 'AIRRC.yaml'
+
 #: NCBI's IgBLAST release trees, mirrored into igblast_base so that igblastn has
 #: the auxiliary data it cannot derive from the germline FASTAs alone. The
 #: old_* directories are the layout airrflow's fetch_igblastdb.sh already tracks.
@@ -99,6 +120,10 @@ class ReferenceReport:
     Arguments:
       written (list): reference_base FASTAs written, as (chain, path) or basename.
       built (list): canonical BLAST database basenames created.
+      renamed (dict): original allele name to the shortened one, for names too
+        long for makeblastdb.
+      aux_missing (dict): species to the J alleles the mirrored NCBI auxiliary
+        file does not name.
       skipped_empty (list): canonical databases skipped because no chain in them
         had any sequence. This is the normal outcome for what a source does not
         cover, such as TR from OGRDB.
@@ -106,6 +131,8 @@ class ReferenceReport:
     written: list = field(default_factory=list)
     built: list = field(default_factory=list)
     skipped_empty: list = field(default_factory=list)
+    renamed: dict = field(default_factory=dict)
+    aux_missing: dict = field(default_factory=dict)
 
     def logSummary(self):
         """Log a one-line summary of what the build produced."""
@@ -129,6 +156,8 @@ class ReferencePlan:
       unrecognized (list): FASTA paths whose names are not in the reference format.
       empty_files (list): recognised FASTA paths that held no sequence.
       duplicates (dict): basename to the number of duplicate names dropped.
+      renamed (dict): original allele name to the shortened one, for every name
+        too long for makeblastdb.
     """
     found_species: list = field(default_factory=list)
     databases: list = field(default_factory=list)
@@ -136,6 +165,7 @@ class ReferencePlan:
     unrecognized: list = field(default_factory=list)
     empty_files: list = field(default_factory=list)
     duplicates: dict = field(default_factory=dict)
+    renamed: dict = field(default_factory=dict)
 
     @property
     def ok(self):
@@ -157,6 +187,9 @@ class ReferencePlan:
                 note = '  (%d duplicate name(s) dropped)' % dropped if dropped else ''
                 lines.append('  %-16s %5d seq  %s%s'
                              % (basename, len(records), dbtype, note))
+        if self.renamed:
+            lines.append('%d allele name(s) shortened to the %d-character BLAST '
+                         'limit' % (len(self.renamed), BLAST_NAME_LIMIT))
         if self.empty:
             lines.append('empty, nothing to build: %s' % ', '.join(self.empty))
         for path in self.empty_files:
@@ -248,6 +281,59 @@ def writeFastaText(path, records):
     return written
 
 
+def shortenName(name):
+    """
+    Fit an allele name inside the BLAST identifier limit.
+
+    The head of the name is kept and a short digest of the whole name replaces
+    the tail, so the gene stays readable and two names that share a head still
+    differ. The digest is taken over the original name rather than the discarded
+    tail, so the same allele always shortens to the same thing whichever database
+    it is built into -- which matters because IgBLAST's auxiliary and delineation
+    files are keyed by name.
+
+    Only VDJbase-style novel allele names reach the limit in practice
+    (``IGHV3-20*01_a123g_t456c_...``); nothing IMGT or OGRDB publishes is close.
+
+    Six hex characters of digest keeps the odds of two different names
+    colliding negligible while leaving the readable head almost intact.
+
+    Arguments:
+      name (str): the allele name.
+
+    Returns:
+      str: the name, shortened only if it had to be.
+    """
+    if len(name) <= BLAST_NAME_LIMIT:
+        return name
+
+    digest = hashlib.sha1(name.encode('utf-8')).hexdigest()[:6]
+
+    return '%s_%s' % (name[:BLAST_NAME_LIMIT - 7], digest)
+
+
+def shortenForBlast(records):
+    """
+    Shorten any allele name makeblastdb would refuse, and say which.
+
+    Arguments:
+      records (list): (name, sequence) tuples from cleanForBlast.
+
+    Returns:
+      tuple: (records, renamed) where renamed maps original name to the
+      shortened one, empty when nothing had to change.
+    """
+    renamed = {}
+    shortened = []
+    for name, sequence in records:
+        short = shortenName(name)
+        if short != name:
+            renamed[name] = short
+        shortened.append((short, sequence))
+
+    return shortened, renamed
+
+
 def cleanForBlast(records):
     """
     Prepare germline records for makeblastdb.
@@ -306,6 +392,12 @@ def referenceFastaPath(reference_dir, prefix, species, kind, chain):
     return Path(reference_dir) / species / kind / name
 
 
+#: Filename extensions read as germline FASTA. A reference written by sourcerer
+#: is always .fasta, but a folder a user assembled themselves may not be, and a
+#: file the manifest names is no use if it is never looked at.
+FASTA_SUFFIXES = ('.fasta', '.fa', '.fna')
+
+
 def parseReferenceName(filename):
     """
     Read (species, chain, is_aa) from a reference FASTA's name.
@@ -317,16 +409,20 @@ def parseReferenceName(filename):
     flat folder are recognised the same way -- which is what lets both layouts
     build.
 
+    A name that does not follow this form is not a failure: a manifest passed to
+    discoverReference can say what such a file holds. See loadReferenceMap.
+
     Arguments:
       filename (str): a FASTA file's basename.
 
     Returns:
       tuple: (species, chain, is_aa), or None if the name does not match.
     """
-    if not filename.endswith('.fasta'):
+    stem, extension = os.path.splitext(filename)
+    if extension not in FASTA_SUFFIXES:
         return None
 
-    tokens = filename[:-len('.fasta')].split('_')
+    tokens = stem.split('_')
     for index, token in enumerate(tokens):
         if token in SPECIES and index + 1 < len(tokens):
             chain = tokens[index + 1]
@@ -336,24 +432,103 @@ def parseReferenceName(filename):
     return None
 
 
-def discoverReference(reference_dir):
+def loadReferenceMap(path):
+    """
+    Read a manifest declaring what each FASTA in a reference folder holds.
+
+    A reference someone assembled themselves rarely follows sourcerer's naming --
+    an OGRDB set downloaded as ``IGH_VDJ_V.fasta`` says nothing about species or
+    chain that a filename rule could read. The manifest says it outright rather
+    than guessing, because a chain inferred wrongly does not fail: it builds a
+    database with the alleles filed under the wrong locus.
+
+    The format is tab- or whitespace-separated, ``#`` comments and blank lines
+    ignored::
+
+        #file                species  chain  [aa]
+        IGH_VDJ_V.fasta      human    IGHV
+        C57BL-6_IGH_V.fasta  mouse    IGHV
+        my_translated.fasta  human    IGHV   aa
+
+    A file is matched on its path relative to the reference folder, or failing
+    that on its basename, so a manifest can stay short when names are unique and
+    still disambiguate two files that share one.
+
+    Arguments:
+      path (Path): the manifest file.
+
+    Returns:
+      dict: file key to (species, chain, is_aa).
+
+    Raises:
+      SourcererError: if the manifest is not there, or on an unreadable line, an
+        unknown species or an unknown chain, none of which are worth silently
+        skipping in a file whose whole purpose is to be explicit.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise SourcererError('no such manifest: %s' % path)
+
+    mapping = {}
+    for number, raw in enumerate(path.read_text().splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+
+        fields = line.split('\t') if '\t' in line else line.split()
+        fields = [f.strip() for f in fields if f.strip()]
+        if len(fields) < 3:
+            raise SourcererError('%s line %d: expected at least file, species '
+                                 'and chain, got %r' % (path, number, line))
+
+        name, species, chain = fields[0], fields[1], fields[2]
+        if species not in SPECIES:
+            raise SourcererError('%s line %d: unknown species %r; known: %s'
+                                 % (path, number, species, ', '.join(SPECIES)))
+        if chain not in KNOWN_CHAINS:
+            raise SourcererError('%s line %d: unknown chain %r; known: %s'
+                                 % (path, number, chain,
+                                    ', '.join(sorted(KNOWN_CHAINS))))
+
+        is_aa = len(fields) > 3 and fields[3].lower() == 'aa'
+        mapping[name] = (species, chain, is_aa)
+
+    return mapping
+
+
+def discoverReference(reference_dir, mapping=None):
     """
     Find every reference FASTA under a folder, by filename, in any layout.
 
     The folder is searched recursively, so a nested reference_base and a flat
-    folder of FASTAs are both handled; classification is by name alone.
+    folder of FASTAs are both handled; classification is by name alone, unless a
+    manifest declares it. The manifest wins over the filename rule, so it can
+    correct a file whose name would otherwise parse to the wrong thing as well as
+    one that does not parse at all.
 
     Arguments:
       reference_dir (Path): a reference_base tree or a flat folder of FASTAs.
+      mapping (dict): a manifest from loadReferenceMap, or None.
 
     Returns:
       tuple: (files, unrecognized) where files is a list of
-      (species, chain, is_aa, Path), and unrecognized is the list of .fasta paths
-      whose names are not in the reference format.
+      (species, chain, is_aa, Path), and unrecognized is the list of FASTA paths
+      that neither the manifest nor the naming rule could place.
     """
+    reference_dir = Path(reference_dir)
+    mapping = mapping or {}
+
+    paths = sorted({path for suffix in FASTA_SUFFIXES
+                    for path in reference_dir.rglob('*' + suffix)})
+
     files, unrecognized = [], []
-    for path in sorted(Path(reference_dir).rglob('*.fasta')):
-        parsed = parseReferenceName(path.name)
+    for path in paths:
+        try:
+            relative = str(path.relative_to(reference_dir))
+        except ValueError:
+            relative = path.name
+        parsed = (mapping.get(relative) or mapping.get(path.name)
+                  or parseReferenceName(path.name))
         if parsed is None:
             unrecognized.append(path)
         else:
@@ -361,6 +536,489 @@ def discoverReference(reference_dir):
             files.append((species, chain, is_aa, path))
 
     return files, unrecognized
+
+
+# ---------------------------------------------------------------------------
+# reference_base provenance
+# ---------------------------------------------------------------------------
+
+def writeImgtMetadata(reference_dir, species, release, date, generated_by,
+                      requested=None, exact=True):
+    """
+    Record which IMGT release each species in a reference_base was built from.
+
+    Written inside reference_base as IMGT.yaml so the release travels with the
+    FASTAs. The release is the one datum a download date does not carry and the
+    one `download --from` needs to fetch the same version again.
+
+    A download fetches one species, but a reference_base holds as many as were
+    downloaded into it, so this merges rather than replaces: writing mouse into
+    a folder that already has human leaves human alone. The release is recorded
+    per species because the two can be downloaded weeks apart, from different
+    IMGT builds, and a single release field would then misname one of them.
+
+    When a release was reconstructed from the archive, what was asked for is
+    recorded beside what was found. The archive does not hold every IMGT build,
+    so a pinned re-download can land on a neighbouring release; recording only
+    the release used would present that substitute as the one requested, and a
+    later `--from` would pin the substitute in turn.
+
+    Arguments:
+      reference_dir (Path): the reference_base root.
+      species (iterable): the species this download wrote, e.g. ('human',).
+      release (str): the IMGT GENE-DB release tag used, e.g. '202631-7', or ''.
+      date (str): the download date, YYYY-MM-DD.
+      generated_by (str): the tool and version that wrote it.
+      requested (str): the release asked for, when this was a pinned
+        re-download, or None for a plain download of the current release.
+      exact (bool): whether the archive held the requested release.
+
+    Returns:
+      Path: the file written.
+    """
+    path = Path(reference_dir) / IMGT_METADATA
+    record = _loadMetadata(path) or {'source': 'https://www.imgt.org/genedb'}
+    record['generated_by'] = generated_by
+    known = dict(record.get('species') or {})
+
+    for name in species:
+        entry = {'release': release or None, 'date': date}
+        if requested is not None:
+            entry['requested'] = requested
+            entry['exact'] = bool(exact)
+        known[name] = entry
+    record['species'] = {name: known[name] for name in sorted(known)}
+
+    return _writeMetadata(path, record)
+
+
+def writeAirrcMetadata(reference_dir, sets, date, generated_by):
+    """
+    Record the OGRDB sets, and their versions, a reference_base was built from.
+
+    Written inside reference_base as AIRRC.yaml. Each set keeps its version and
+    release date, and its DOI when it was resolved, so the exact sets can be
+    fetched again with `download --from` and cited.
+
+    A download fetches one species, but a reference_base holds as many as were
+    downloaded into it, so this merges on (species, set): a species downloaded
+    later joins the ones already recorded, and re-downloading a set replaces its
+    entry rather than adding a second one.
+
+    Arguments:
+      reference_dir (Path): the reference_base root.
+      sets (list): per-set dicts (species, locus, set, version, release_date,
+        and optionally doi, zenodo_record_id, zenodo_url).
+      date (str): the download date, YYYY-MM-DD.
+      generated_by (str): the tool and version that wrote it.
+
+    Returns:
+      Path: the file written.
+    """
+    path = Path(reference_dir) / AIRRC_METADATA
+    record = _loadMetadata(path) or {'source': 'https://ogrdb.airr-community.org'}
+    record['generated_by'] = generated_by
+    record['date'] = date
+
+    known = {(item.get('species'), item.get('set')): item
+             for item in record.get('sets') or []}
+    known.update({(item.get('species'), item.get('set')): item for item in sets})
+    record['sets'] = [known[key] for key in sorted(known, key=lambda k: (k[0] or '',
+                                                                        k[1] or ''))]
+
+    return _writeMetadata(path, record)
+
+
+def _loadMetadata(path):
+    """
+    Read a provenance sidecar if it is there, so a write can merge into it.
+
+    Arguments:
+      path (Path): the sidecar.
+
+    Returns:
+      dict: the record, or None if there is nothing readable to merge with.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        with open(path) as handle:
+            return yaml.safe_load(handle) or None
+    except (OSError, yaml.YAMLError):
+        log.warning('%s is unreadable; rewriting it from this download alone',
+                    path.name)
+        return None
+
+
+def _writeMetadata(path, record):
+    """Write a provenance record as YAML, keys in the order given."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w') as handle:
+        yaml.safe_dump(record, handle, sort_keys=False, default_flow_style=False)
+
+    return path
+
+
+#: Provenance sidecar written into an igblast_base by `reference build`, so a
+#: user-supplied reference records what was built and where it came from, the
+#: same way a download records its release. Named apart from the source sidecars
+#: because it describes the build, not an upstream release.
+BUILD_METADATA = 'sourcerer_build.yaml'
+
+
+def writeBuildMetadata(out_dir, report, source_dir, date, generated_by):
+    """
+    Record what `reference build` produced, and carry the source's provenance.
+
+    A custom reference is built into an igblast_base with no upstream release to
+    name, so this records the build itself: what was built, from where, what came
+    up empty, which allele names had to be shortened, and which J alleles the
+    mirrored auxiliary file does not cover. When the source reference already carries an IMGT.yaml or
+    AIRRC.yaml, from an earlier download, those are copied in beside it so the
+    version provenance travels with the built databases.
+
+    Arguments:
+      out_dir (Path): the igblast_base that was built.
+      report (ReferenceReport): the build outcome.
+      source_dir (Path): the reference folder the build read from.
+      date (str): the build date, YYYY-MM-DD.
+      generated_by (str): the tool and version that built it.
+
+    Returns:
+      list: the files written into out_dir.
+    """
+    out_dir, source_dir = Path(out_dir), Path(source_dir)
+    record = {'generated_by': generated_by,
+              'date': date,
+              'built_from': _relativeTo(source_dir, out_dir),
+              'databases': list(report.built),
+              'skipped_empty': list(report.skipped_empty)}
+    # Both of these change how the databases behave, so they travel with them
+    # rather than living only in the log of the run that built them.
+    if report.renamed:
+        record['shortened_alleles'] = len(report.renamed)
+    if report.aux_missing:
+        record['aux_not_covered'] = {species: list(names) for species, names
+                                     in sorted(report.aux_missing.items())}
+    written = [_writeMetadata(out_dir / BUILD_METADATA, record)]
+
+    for name in (IMGT_METADATA, AIRRC_METADATA):
+        found = _findSidecar(source_dir, name)
+        if found is not None:
+            destination = out_dir / name
+            shutil.copyfile(found, destination)
+            written.append(destination)
+
+    return written
+
+
+def _relativeTo(path, root):
+    """
+    Express a path relative to the built directory, so a move does not break it.
+
+    The reference a build reads is usually a sibling of the igblast_base it
+    writes, so this walks up as well as down, unlike Provenance.relativize,
+    which records paths inside one download root.
+
+    Arguments:
+      path (Path): the path to express.
+      root (Path): the directory the record is written into.
+
+    Returns:
+      str: a relative path where one exists, else the absolute path.
+    """
+    try:
+        return os.path.relpath(Path(path).resolve(), Path(root).resolve())
+    except (ValueError, OSError):
+        return str(path)
+
+
+def _findSidecar(source_dir, name):
+    """
+    Find a provenance sidecar at the reference root or one level up.
+
+    `reference build` is often pointed at a reference_base whose sidecar sits
+    beside it, or at that reference_base itself, so both are checked.
+
+    Arguments:
+      source_dir (Path): the reference folder given to the build.
+      name (str): the sidecar filename.
+
+    Returns:
+      Path: the sidecar, or None.
+    """
+    for candidate in (source_dir / name, source_dir.parent / name):
+        if candidate.is_file():
+            return candidate
+
+    return None
+
+
+def loadReferencePins(path):
+    """
+    Read the IMGT.yaml / AIRRC.yaml a `download --from` should re-download.
+
+    Accepts a reference_base directory or a single metadata file. A directory is
+    searched for both sidecars, so a blended reference pins both sources at once.
+
+    Arguments:
+      path (Path): a reference_base directory or an IMGT.yaml/AIRRC.yaml file.
+
+    Returns:
+      dict: {'imgt': record or None, 'airrc': record or None}.
+
+    Raises:
+      SourcererError: if nothing readable is found.
+    """
+    path = Path(path)
+    pins = {'imgt': None, 'airrc': None}
+
+    candidates = []
+    if path.is_dir():
+        candidates = [path / IMGT_METADATA, path / AIRRC_METADATA]
+    else:
+        candidates = [path]
+
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        with open(candidate) as handle:
+            record = yaml.safe_load(handle) or {}
+        if 'sets' in record or candidate.name == AIRRC_METADATA:
+            pins['airrc'] = record
+        else:
+            pins['imgt'] = record
+
+    if pins['imgt'] is None and pins['airrc'] is None:
+        raise SourcererError('no IMGT.yaml or AIRRC.yaml found at %s; point '
+                             '--from at a reference_base or one of those files'
+                             % path)
+
+    return pins
+
+
+def describeReference(path, mapping=None):
+    """
+    Render what a reference folder is and where it came from.
+
+    The provenance sidecars are written so that a reference can be re-downloaded
+    and cited without sourcerer's help, but reading three YAML files by hand to
+    answer "what is this folder" is friction enough that it does not get done.
+    This is that answer: the release and sets it was built from, what was built,
+    and what the folder actually holds.
+
+    Both a reference_base and a directory containing one are accepted, as are an
+    igblast_base, which carries copies of the same sidecars.
+
+    Arguments:
+      path (Path): a reference folder, or a directory holding one.
+      mapping (dict): a manifest from loadReferenceMap, or None.
+
+    Returns:
+      str: the report.
+
+    Raises:
+      SourcererError: if the folder does not exist.
+    """
+    path = Path(path)
+    if not path.is_dir():
+        raise SourcererError('no such reference folder: %s' % path)
+
+    root = path / 'reference_base' if (path / 'reference_base').is_dir() else path
+    lines = ['reference: %s' % root]
+
+    found = False
+    for name, title in ((IMGT_METADATA, 'IMGT'), (AIRRC_METADATA, 'AIRR-C'),
+                        (BUILD_METADATA, 'build')):
+        sidecar = _findSidecar(root, name)
+        if sidecar is None:
+            continue
+        found = True
+        with open(sidecar) as handle:
+            record = yaml.safe_load(handle) or {}
+        lines.append('')
+        lines.append('%s (%s)' % (title, sidecar.name))
+        # Rendered as the YAML it is, so what is shown matches the file on disk.
+        lines.append(textwrap.indent(
+            yaml.safe_dump(record, sort_keys=False).rstrip(), '  '))
+
+    if not found:
+        lines.append('')
+        lines.append('no provenance sidecars; this folder was not written by a '
+                     'sourcerer download or build')
+
+    files, unrecognized = discoverReference(root, mapping=mapping)
+    lines.append('')
+    if files:
+        counts = {}
+        for species, chain, is_aa, _path in files:
+            counts.setdefault(species, []).append(chain + (' (aa)' if is_aa else ''))
+        lines.append('contents: %d FASTA file(s)' % len(files))
+        for species in sorted(counts):
+            lines.append('  %-8s %s' % (species, ', '.join(sorted(counts[species]))))
+    else:
+        lines.append('contents: no reference FASTAs found')
+    for item in unrecognized:
+        lines.append('  warning: %s is not in the reference naming format and no '
+                     'manifest names it' % item.name)
+
+    return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------------------
+# comparing two references
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ChainDiff:
+    """
+    How one chain differs between two references.
+
+    Arguments:
+      species (str): the species.
+      chain (str): the chain, e.g. 'IGHV'.
+      is_aa (bool): whether this is the translated (amino acid) V.
+      identical (int): alleles present in both with the same sequence.
+      added (list): allele names only in the second reference.
+      removed (list): allele names only in the first reference.
+      changed (list): allele names in both whose sequence differs.
+    """
+    species: str
+    chain: str
+    is_aa: bool
+    identical: int = 0
+    added: list = field(default_factory=list)
+    removed: list = field(default_factory=list)
+    changed: list = field(default_factory=list)
+
+    @property
+    def same(self):
+        """bool: True if nothing was added, removed or changed."""
+        return not (self.added or self.removed or self.changed)
+
+
+@dataclass
+class ReferenceDiff:
+    """
+    An allele-level comparison of two reference folders.
+
+    Arguments:
+      chains (list): one ChainDiff per (species, chain) seen in either folder.
+    """
+    chains: list = field(default_factory=list)
+
+    @property
+    def same(self):
+        """bool: True if every chain is identical between the two folders."""
+        return all(chain.same for chain in self.chains)
+
+    def summary(self):
+        """
+        Render the comparison, one line per chain, differences called out.
+
+        Returns:
+          str: the report.
+        """
+        lines = []
+        for diff in self.chains:
+            label = '%s %s%s' % (diff.species, diff.chain,
+                                 ' (aa)' if diff.is_aa else '')
+            if diff.same:
+                lines.append('%-22s %d identical' % (label, diff.identical))
+                continue
+            parts = ['%d identical' % diff.identical]
+            if diff.changed:
+                parts.append('%d changed' % len(diff.changed))
+            if diff.added:
+                parts.append('%d added' % len(diff.added))
+            if diff.removed:
+                parts.append('%d removed' % len(diff.removed))
+            lines.append('%-22s %s' % (label, ', '.join(parts)))
+            for name in diff.changed:
+                lines.append('    changed: %s' % name)
+            for name in diff.added:
+                lines.append('    added:   %s' % name)
+            for name in diff.removed:
+                lines.append('    removed: %s' % name)
+
+        if not lines:
+            return 'no reference FASTAs found to compare'
+        verdict = 'identical' if self.same else 'differences found'
+        return '\n'.join(lines + ['', verdict])
+
+
+def _alleleMap(files):
+    """
+    Collapse discovered FASTAs into {(species, chain, is_aa): {name: sequence}}.
+
+    Sequences are compared without gaps and in upper case, so the same allele
+    filed gapped in one reference and ungapped in another is not a false change;
+    only a real base difference is. The name is taken with alleleName so an IMGT
+    pipe header and a bare OGRDB name for the same allele line up.
+
+    Arguments:
+      files (list): (species, chain, is_aa, Path) tuples from discoverReference.
+
+    Returns:
+      dict: (species, chain, is_aa) to {allele name: cleaned sequence}.
+    """
+    grouped = {}
+    for species, chain, is_aa, path in files:
+        target = grouped.setdefault((species, chain, is_aa), {})
+        for header, sequence in parseFasta(path.read_text()):
+            target[alleleName(header)] = sequence.replace('.', '').upper()
+
+    return grouped
+
+
+def diffReference(dir_a, dir_b, species=None, mapping=None):
+    """
+    Compare two reference folders allele by allele.
+
+    Both folders are read by filename in any layout, so a nested reference_base
+    and a flat folder compare the same way. This is what turns a re-download of
+    the closest archived IMGT release into a checked result: run it against the
+    reference you started with and it says whether the sets match or exactly what
+    drifted.
+
+    Arguments:
+      dir_a (Path): the first reference folder (the baseline).
+      dir_b (Path): the second reference folder.
+      species (iterable): limit to these species, or None for every species seen.
+      mapping (dict): a manifest from loadReferenceMap, applied to both folders,
+        or None.
+
+    Returns:
+      ReferenceDiff: the per-chain comparison.
+    """
+    files_a, _ = discoverReference(dir_a, mapping=mapping)
+    files_b, _ = discoverReference(dir_b, mapping=mapping)
+    if species is not None:
+        wanted = set(species)
+        files_a = [f for f in files_a if f[0] in wanted]
+        files_b = [f for f in files_b if f[0] in wanted]
+
+    map_a = _alleleMap(files_a)
+    map_b = _alleleMap(files_b)
+
+    diff = ReferenceDiff()
+    for key in sorted(set(map_a) | set(map_b)):
+        species_, chain, is_aa = key
+        left = map_a.get(key, {})
+        right = map_b.get(key, {})
+        chain_diff = ChainDiff(species=species_, chain=chain, is_aa=is_aa,
+                               added=sorted(set(right) - set(left)),
+                               removed=sorted(set(left) - set(right)))
+        for name in sorted(set(left) & set(right)):
+            if left[name] == right[name]:
+                chain_diff.identical += 1
+            else:
+                chain_diff.changed.append(name)
+        diff.chains.append(chain_diff)
+
+    return diff
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +1052,7 @@ def runMakeblastdb(fasta, out_base, dbtype):
                              % (Path(fasta).name, result.stderr.strip()))
 
 
-def planReference(reference_dir, species=None):
+def planReference(reference_dir, species=None, mapping=None):
     """
     Work out which IgBLAST databases a reference folder would produce.
 
@@ -408,11 +1066,13 @@ def planReference(reference_dir, species=None):
     Arguments:
       reference_dir (Path): a reference_base tree or a flat folder of FASTAs.
       species (iterable): limit to these species, or None for every species found.
+      mapping (dict): a manifest from loadReferenceMap, for files whose names do
+        not say what they hold, or None.
 
     Returns:
       ReferencePlan: the databases that would build and the diagnostics.
     """
-    files, unrecognized = discoverReference(reference_dir)
+    files, unrecognized = discoverReference(reference_dir, mapping=mapping)
     found = sorted({item[0] for item in files})
     wanted = list(species) if species else found
 
@@ -464,10 +1124,13 @@ def _addToPlan(plan, basename, dbtype, records, keep_empty=True):
     dropped = len(records) - len(cleaned)
     if dropped:
         plan.duplicates[basename] = dropped
+
+    cleaned, renamed = shortenForBlast(cleaned)
+    plan.renamed.update(renamed)
     plan.databases.append((basename, dbtype, cleaned))
 
 
-def buildIgblastBase(reference_dir, out_dir, client, species=None):
+def buildIgblastBase(reference_dir, out_dir, client, species=None, mapping=None):
     """
     Build the IgBLAST database tree airrflow expects from a reference folder.
 
@@ -479,6 +1142,7 @@ def buildIgblastBase(reference_dir, out_dir, client, species=None):
       out_dir (Path): the igblast_base to write.
       client (HttpClient): used to mirror the NCBI support trees.
       species (iterable): limit to these species, or None for every species found.
+      mapping (dict): a manifest from loadReferenceMap, or None.
 
     Returns:
       ReferenceReport: what was built and what was skipped.
@@ -486,12 +1150,80 @@ def buildIgblastBase(reference_dir, out_dir, client, species=None):
     Raises:
       SourcererError: if makeblastdb is unavailable.
     """
-    plan = planReference(reference_dir, species=species)
+    plan = planReference(reference_dir, species=species, mapping=mapping)
     if plan.unrecognized:
         log.warning('%d file(s) skipped: names not in the reference format',
                     len(plan.unrecognized))
 
     return buildFromPlan(plan, out_dir, client)
+
+
+def writeRenameLog(out_dir, renamed):
+    """
+    Record every allele name a build had to shorten.
+
+    A shortened name is what IgBLAST reports and what lands in a v_call, so the
+    mapping back to the original has to be written down or the results cannot be
+    traced to the reference they came from.
+
+    Arguments:
+      out_dir (Path): the igblast_base being built.
+      renamed (dict): original name to shortened name.
+
+    Returns:
+      Path: the file written.
+    """
+    path = Path(out_dir) / RENAME_LOG
+    with open(path, 'w') as handle:
+        handle.write('#original\tshortened\n')
+        for original in sorted(renamed):
+            handle.write('%s\t%s\n' % (original, renamed[original]))
+
+    return path
+
+
+def checkAuxCoverage(out_dir, plan):
+    """
+    Find J alleles the mirrored auxiliary file does not name.
+
+    IgBLAST looks a J germline up in the auxiliary file **by name**, unlike the
+    V delineation file, which it transfers by alignment. A J allele with no row
+    there gets no CDR3 and no productivity call, silently -- igblastn reports
+    ``V-J frame: N/A`` and no CDR3 sub-region rather than failing.
+
+    The auxiliary file mirrored here is NCBI's, so it covers the names IMGT
+    publishes. A reference naming its J alleles otherwise -- OGRDB's mouse sets
+    call them ``IGKJ0-4JXG*00`` -- is not covered, and nothing else would say so.
+
+    The remedy is to build an auxiliary file from the reference itself and pass
+    it to igblastn with ``-auxiliary_data``. Sourcerer does not build one: that
+    belongs with the pipeline that runs IgBLAST. Reporting the gap is what it can
+    usefully do, so the names needing rows are known rather than guessed at.
+
+    Arguments:
+      out_dir (Path): the igblast_base being built.
+      plan (ReferencePlan): the databases that were built.
+
+    Returns:
+      dict: species to the sorted J allele names with no auxiliary row.
+    """
+    missing = {}
+    for basename, _dbtype, records in plan.databases:
+        species, *_rest, segment = basename.split('_')
+        if segment != 'j' or species == 'aa':
+            continue
+
+        path = Path(out_dir) / 'optional_file' / ('%s_gl.aux' % species)
+        if not path.is_file():
+            continue
+        named = {line.split()[0] for line in path.read_text().splitlines()
+                 if line.strip() and not line.startswith('#')}
+
+        absent = {name for name, _sequence in records if name not in named}
+        if absent:
+            missing.setdefault(species, set()).update(absent)
+
+    return {species: sorted(names) for species, names in missing.items()}
 
 
 def buildFromPlan(plan, out_dir, client):
@@ -526,6 +1258,24 @@ def buildFromPlan(plan, out_dir, client):
         report.built.append(basename)
 
     mirrorSupport(out_dir, client)
+
+    report.renamed = dict(plan.renamed)
+    if plan.renamed:
+        log.warning('%d allele name(s) were longer than the %d-character BLAST '
+                    'limit and were shortened; the mapping is in %s',
+                    len(plan.renamed), BLAST_NAME_LIMIT,
+                    writeRenameLog(out_dir, plan.renamed))
+
+    report.aux_missing = checkAuxCoverage(out_dir, plan)
+    for species, names in sorted(report.aux_missing.items()):
+        log.warning('%s: %d J allele(s) are not named in the mirrored NCBI '
+                    'auxiliary file (%s_gl.aux), so IgBLAST will call no CDR3 '
+                    'and no productivity for reads assigned to them. Build an '
+                    'auxiliary file from this reference and pass it to igblastn '
+                    'with -auxiliary_data. Uncovered: %s',
+                    species, len(names), species, ', '.join(names[:5])
+                    + (', ...' if len(names) > 5 else ''))
+
     report.logSummary()
 
     return report

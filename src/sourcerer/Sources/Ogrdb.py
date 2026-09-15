@@ -25,10 +25,13 @@ __author__ = 'Ayelet Peres'
 # Imports
 import logging
 import re
-from datetime import UTC
+from datetime import UTC, datetime
 from urllib.parse import quote
 
+from bs4 import BeautifulSoup
+
 # Sourcerer imports
+from sourcerer import Reference
 from sourcerer.Exceptions import OgrdbParseError
 from sourcerer.Reference import (
     KIND_CONSTANT,
@@ -38,11 +41,17 @@ from sourcerer.Reference import (
 )
 from sourcerer.Sources.Base import DataUnit
 from sourcerer.Sources.Germline import ReferenceSource
+from sourcerer.Version import __version__
 
 log = logging.getLogger(__name__)
 
-#: Endpoint.
+#: Endpoints. The API serves the germline data; the web UI is scraped only when
+#: DOI resolution is asked for, since the API does not expose the Zenodo DOI.
 API = 'https://ogrdb.airr-community.org/api_v2'
+SITE = 'https://ogrdb.airr-community.org/germline_sets'
+
+#: How a DOI is linked from the germline_sets table.
+DOI_PREFIX = 'https://doi.org/'
 
 #: Species as OGRDB labels them.
 SPECIES_LABEL = {'human': 'Homo sapiens', 'mouse': 'Mus musculus'}
@@ -196,6 +205,27 @@ class OgrdbSource(ReferenceSource):
         'inferred immune receptor genes. Nucleic Acids Res. '
         '2020;48(D1):D964-D970. doi:10.1093/nar/gkz822',
     )
+
+    #: When set, set name to the version to re-download, from a pinned AIRRC.yaml,
+    #: rather than each set's latest. `_resolve_doi` opts in to scraping the DOI.
+    _pins = None
+    _resolve_doi = False
+
+    def pinSets(self, sets):
+        """
+        Re-download specific set versions instead of the latest of each.
+
+        Arguments:
+          sets (list): AIRRC.yaml set records, each with 'set' and 'version'.
+        """
+        self._pins = {item['set']: {'version': str(item['version']),
+                                    'release_date': item.get('release_date')}
+                      for item in sets
+                      if item.get('set') and item.get('version') is not None}
+
+    def enableDoi(self):
+        """Resolve each set's Zenodo DOI for the AIRRC.yaml provenance."""
+        self._resolve_doi = True
 
     # -- API client -------------------------------------------------------
 
@@ -357,7 +387,19 @@ class OgrdbSource(ReferenceSource):
 
             for set_name, chains in sets:
                 set_id = self.resolveSetId(species_id, locus, set_name)
-                version, _date = self.latestRelease(set_id)
+                pin = self._pins.get(set_name) if self._pins else None
+                if pin:
+                    version, release_date = pin['version'], pin['release_date']
+                else:
+                    if self._pins:
+                        # Falling back to latest inside a pinned re-download
+                        # yields a reference that is part pinned and part
+                        # current, which is exactly what --from is meant to
+                        # avoid; it is worth saying so rather than only
+                        # reporting the sets that did match.
+                        log.warning('%s is not in the pinned reference; taking '
+                                    'its latest version instead', set_name)
+                    version, release_date = self.latestRelease(set_id)
                 for fmt in FORMATS:
                     units.append(DataUnit(
                         unit_id='%s.%s.fasta' % (safeSetName(set_name), fmt),
@@ -366,6 +408,7 @@ class OgrdbSource(ReferenceSource):
                         metadata={'species': species, 'locus': locus,
                                   'set_name': set_name, 'format': fmt,
                                   'set_id': set_id, 'version': version,
+                                  'release_date': release_date,
                                   'chains': list(chains)}))
 
         if query.limit is not None:
@@ -402,3 +445,89 @@ class OgrdbSource(ReferenceSource):
                 log.info('%s: %d sequences', written.name, len(records))
 
         return report
+
+    def writeReferenceMetadata(self, reference_dir, units):
+        """
+        Write AIRRC.yaml recording each set and version this reference used.
+
+        Arguments:
+          reference_dir (Path): the reference_base root.
+          units (list): the DataUnits fetched; the two per set share one entry.
+
+        Returns:
+          list: the metadata files written.
+        """
+        sets, seen = [], set()
+        for unit in units:
+            meta = unit.metadata
+            if meta['set_name'] in seen:
+                continue
+            seen.add(meta['set_name'])
+            record = {'species': meta['species'], 'locus': meta['locus'],
+                      'set': meta['set_name'], 'version': meta['version'],
+                      'release_date': meta.get('release_date')}
+            if self._resolve_doi:
+                record.update(self.resolveDoi(
+                    SPECIES_LABEL[meta['species']], meta['set_name'],
+                    meta['version'], meta.get('release_date')))
+            sets.append(record)
+
+        path = Reference.writeAirrcMetadata(
+            reference_dir, sets, datetime.now(UTC).strftime('%Y-%m-%d'),
+            'sourcerer %s' % __version__)
+
+        return [path]
+
+    def resolveDoi(self, species_label, set_name, version, release_date):
+        """
+        Scrape the OGRDB web UI for a set version's Zenodo DOI.
+
+        The API does not expose the DOI, so it is read from the germline_sets
+        page: fetch the page for its CSRF token, post the species form, and find
+        the table row whose set, version and release date match. This is HTML
+        scraping of a form-driven page and is best-effort by nature; a failure to
+        find the DOI is logged and left out, never fatal. The page is read with
+        the parser the rest of sourcerer uses, so a reordered attribute or a tag
+        inside a cell does not silently stop matching.
+
+        Arguments:
+          species_label (str): the OGRDB species label, e.g. 'Homo sapiens'.
+          set_name (str): the set name.
+          version (str): the release version.
+          release_date (str): the release date, YYYY-MM-DD.
+
+        Returns:
+          dict: doi and, when parseable, zenodo_record_id and zenodo_url; empty
+          if the DOI could not be resolved.
+        """
+        form = BeautifulSoup(self.client.get(SITE).text, 'html.parser')
+        token = form.find('input', attrs={'name': 'csrf_token'})
+        if token is None:
+            log.warning('could not read the OGRDB CSRF token; skipping DOI for %s',
+                        set_name)
+            return {}
+
+        page = self.client.post(SITE, data={
+            'csrf_token': token['value'], 'species': species_label,
+            'submit': 'Show Germline Sets'}).text
+
+        for row in BeautifulSoup(page, 'html.parser').find_all('tr'):
+            cells = [cell.get_text(strip=True) for cell in row.find_all('td')]
+            link = row.find('a', href=lambda href: href
+                            and href.startswith(DOI_PREFIX))
+            if (not cells or cells[0] != set_name or link is None
+                    or release_date not in cells):
+                continue
+            if normalizeVersion(cells[cells.index(release_date) - 1]) == str(version):
+                doi = link['href'][len(DOI_PREFIX):]
+                found = {'doi': doi}
+                zid = re.search(r'zenodo\.(\d+)', doi)
+                if zid:
+                    found['zenodo_record_id'] = zid.group(1)
+                    found['zenodo_url'] = ('https://zenodo.org/records/%s'
+                                           % zid.group(1))
+                return found
+
+        log.warning('could not resolve a DOI for %s v%s (%s)',
+                    set_name, version, release_date)
+        return {}

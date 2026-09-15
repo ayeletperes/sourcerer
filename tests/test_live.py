@@ -82,5 +82,35 @@ class TestOgrdbLive(unittest.TestCase):
         self.assertIn('>', body, 'the OGRDB FASTA download was empty')
 
 
+@unittest.skipUnless(LIVE, 'set SOURCERER_LIVE=1 to contact IMGT and OGRDB')
+class TestGenedbLive(unittest.TestCase):
+    """
+    Live checks against the genedb-releases archive that `download --from` uses
+    """
+
+    def setUp(self):
+        from sourcerer import Genedb
+
+        self.genedb = Genedb
+        self.client = HttpClient()
+
+    def test_releases_list_and_resolve(self):
+        """The archive lists releases and the newest resolves exactly."""
+        releases = self.genedb.listReleases(self.client)
+        self.assertTrue(releases, 'genedb-releases listed no releases')
+        newest = releases[-1][0]
+        _dir, tag, exact = self.genedb.resolveRelease(self.client, newest)
+        self.assertEqual(tag, newest)
+        self.assertTrue(exact)
+
+    def test_bulk_file_is_a_pipe_delimited_fasta(self):
+        """The resolved release's bulk file still has IMGT pipe headers."""
+        dirname, _tag, _exact = self.genedb.resolveRelease(
+            self.client, self.genedb.listReleases(self.client)[-1][0])
+        body = self.client.get(self.genedb.bulkUrl(dirname, 'nt')).text
+        self.assertIn('|Homo sapiens|', body,
+                      'the genedb-releases bulk FASTA layout changed')
+
+
 if __name__ == '__main__':
     unittest.main()

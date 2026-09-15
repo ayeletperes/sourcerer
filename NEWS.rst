@@ -15,6 +15,9 @@ General:
   ``paired`` and ``unpaired`` OAS collections, with commandline filter flags
   generated from a checked-in snapshot of the OAS search form rather than
   hardcoded.
++ ``sourcerer oas download`` without ``--format`` now writes an AIRR
+  rearrangement TSV directly, rather than only the raw mirror, which needed a
+  second run before the data was usable.
 + Added conversion of downloaded data to an AIRR rearrangement TSV, with a
   streaming validation report, and to FASTA.
 + Added ``nf-core/airrflow`` samplesheet generation, one samplesheet per
@@ -23,8 +26,24 @@ General:
 + Added ``sourcerer schema show`` and ``sourcerer schema refresh``, to inspect
   and re-harvest the stored snapshot of a source's search fields and data unit
   catalog.
++ Added ``sourcerer schema check``, which compares the packaged snapshot
+  against a stored one (by default, the last committed version) and sorts
+  every difference into one of four severity levels -- additive, anomaly,
+  removed, or structural -- with ``--fail-on`` to fail a run once the overall
+  level reaches a chosen threshold, and ``--report``/``--markdown`` to write
+  the findings out.
++ Added a monthly ``schema-drift`` GitHub Action that re-harvests the OAS
+  snapshot and opens a pull request with the drift report only when something
+  actually changed, so a quiet month opens no pull request; a harvest that
+  fails outright opens an issue instead, since a partial snapshot would
+  otherwise look like real drift.
 + Added a download provenance record (what was fetched, from where, when, and
   its hash) written alongside every download.
++ Added ``sourcerer oas verify``, which reads an already-downloaded
+  samplesheet and cross-references each row's subject against NCBI's own
+  record for the run or sample accession named in it, writing an evidence
+  report -- including a check for pooled or multi-donor runs that OAS's own
+  subject field cannot tell apart.
 
 Germline references:
 

@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- PAGE settings -->
+    <title>OAS: Observed Antibody Space</title>
+    <link href="/webapps/oas/static/assets/img/favicon.png" rel="shortcut icon" type="image/x-icon" />
+
+    <!-- CSS dependencies -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.10.20/css/jquery.dataTables.min.css">
+    <link rel="stylesheet" href="/webapps/oas/static/assets/css/sabdab_theme.css">
+    <link rel="stylesheet" href="/webapps/oas/static/assets/css/oas_theme.css">
+    <link rel="stylesheet" href="/webapps/oas/static/assets/css/prism.css">
+    <!--<link href="https://myCDN.com/prism@v1.x/themes/prism.css" rel="stylesheet" /> -->
+
+    <link href="https://fonts.googleapis.com/css?family=Comfortaa|Josefin+Slab|Source+Code+Pro" rel="stylesheet"> 
+
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.0/css/all.css" integrity="sha384-lZN37f5QGtY3VHgisS14W3ExzMWZxybE1SJSEsQp9S+oqd12jhcu+A56Ebc1zFSJ" crossorigin="anonymous">
+
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-142143190-2"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'UA-142143190-2');
+    </script>
+
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-md navbar-light bg-light" style="border-bottom: 3px solid #002147;">
+        <div class="container"> 
+            <a class="navbar-brand text-primary" href="/webapps/oas/"><img class="img-fluid d-block" src="/webapps/oas/static/assets/img/OAS_logo.png" width="100"></a>
+            <button class="navbar-toggler navbar-toggler-right border-0" type="button" data-toggle="collapse" data-target="#navbar4">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+          
+            <div class="collapse navbar-collapse" id="navbar4">
+                <ul class="navbar-nav ml-auto">
+
+		    <li class="nav-item dropdown">
+			<a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#" role="button" aria-haspopup="true" aria-expanded="false">Unpaired Sequences</a>
+			<div class="dropdown-menu">
+			    <a class="dropdown-item" href="/webapps/oas/oas_unpaired/">Search</a>
+			    <a class="dropdown-item" href="/webapps/oas/downloads/">Downloads</a>
+			    <a class="dropdown-item" href="/webapps/oas/documentation/">Help</a>
+			</div>
+		    </li>
+
+		    <li class="nav-item dropdown">
+			<a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#" role="button" aria-haspopup="true" aria-expanded="false">Paired Sequences</a>
+			<div class="dropdown-menu">
+			    <a class="dropdown-item" href="/webapps/oas/oas_paired/">Search</a>
+			    <a class="dropdown-item" href="/webapps/oas/downloads_paired/">Downloads</a>
+			    <a class="dropdown-item" href="/webapps/oas/documentation_paired/">Help</a>
+			</div>
+		    </li>
+
+		    <!--<li class="nav-item">
+			<a class="nav-link" href="/webapps/oas/oas_unpaired/">Search</a>
+		    </li>
+
+                    <li class="nav-item">
+                        <a class="nav-link" href="/webapps/oas/downloads/" role="button" aria-haspopup="true" aria-expanded="false">Downloads</a>
+                    </li>
+                
+                    <li class="nav-item">
+                        <a class="nav-link" href="/webapps/oas/documentation/" role="button" aria-haspopup="true" aria-expanded="false">Help</a>
+		    </li>-->
+
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#" role="button" aria-haspopup="true" aria-expanded="false">More OPIG Resources...</a>
+                        <div class="dropdown-menu">
+                            <a class="dropdown-item" href="http://opig.stats.ox.ac.uk/webapps/sabdab" target="_blank">SAbDab</a>
+                            <a class="dropdown-item" href="http://opig.stats.ox.ac.uk/webapps/sabpred" target="_blank">SAbPred</a>
+                            <a class="dropdown-item" href="http://opig.stats.ox.ac.uk/webapps/stcrdab" target="_blank">STCRDab</a>
+                        </div>
+                    </li>
+
+                </ul>
+            </div>
+        </div>
+    </nav>
+  
+  <button onclick="topFunction()" id="topBtn" title="Go to top">^</button>
+  
+  
+
+<div class="text-center py-1 bg-primary shadow-none" style="	background-image: url(/webapps/oas/static/assets/img/Vander_Heiden_Fotor.png);	background-position: center;	background-size: cover;	background-repeat: repeat;	box-shadow: 0px 0px 4px  black; border: 3px solid #002147; border-top: 0px solid #002147;">
+    <div class="container">
+      <div class="row justify-content-center rounded my-5 mx-5 shadow-none" style="	box-shadow: 0px 0px 4px  black; border: 3px solid #002147; background-color: #002147; color: #ffffff;">
+        <div class="col-md-9 pt-4 pb-4">
+          <h1 style="">Data Unit Details</h1>
+        </div>
+      </div>
+    </div>
+</div>
+
+<div class="container">
+    <div class="row">
+        <div class="col-md-12 pt-4 pb-4" id="sections">
+            
+            <h3 style="word-wrap: break-word;">SRR11528761_paired</h3>
+            <p>Below you can see the detailed data associated with this particular data unit.</p>
+            <p>Download the data-unit: <a href="https://opig.stats.ox.ac.uk/webapps/ngsdb/paired/Alsoiussi_2020/csv/SRR11528761_paired.csv.gz">here</a></p>
+            
+            <table id = "results_table" class="table table-details">
+                <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+                <tbody>
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Run</td><td>SRR11528761</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                            <tr>	<td>Link to study</td><td><a href="https://doi.org/10.4049/jimmunol.2000583" target="_blank">here</a></td></tr>
+                        
+                        
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                            <tr>	<td>Author</td><td><a href="https://doi.org/10.4049/jimmunol.2000583" target="_blank">Alsoiussi et al., 2020</a></td></tr>
+                        
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Species</td><td>mouse_C57BL/6</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Age</td><td>10-Weeks</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>BSource</td><td>Lymph</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>BType</td><td>Plasmablast</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Vaccine</td><td>None</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Disease</td><td>SARS-COV-2</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Subject</td><td>no</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Longitudinal</td><td>no</td></tr>
+                        
+                    
+                
+                    
+                        
+                            <tr>	<td>Filtered sequences</td><td>5742</td></tr>
+                        
+                        
+                        
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Isotype</td><td>All</td></tr>
+                        
+                    
+                
+                    
+                        
+                        
+                        
+                        
+                            <tr>	<td>Chain</td><td>Paired</td></tr>
+                        
+                    
+                
+                    
+                
+                </tbody>
+            </table>
+                
+        </div> 
+    </div>
+</div>
+		
+
+  
+  <div class="py-5" style="background-color: #002147; color: #ffffff;">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-8 txt-center">
+	  <p>Updated OAS paper: Olsen, T.H., Boyles, F., and Deane C.M. (2021). Protein Science. <a href="https://doi.org/10.1002/pro.4205">[link]</a></p>
+          <p>The current OAS is an update of the previous paper: Kovaltsuk, A., Leem, J. et al (2018). J. Immunol. <a href="https://doi.org/10.4049/jimmunol.1800708">[link]</a></p>
+       
+        </div>
+        <div class="col-md-4"><a href="http://opig.stats.ox.ac.uk/" target="_blank"><img class="img-fluid d-block img-flexipos" src="/webapps/oas/static/assets/img/OPIG_logo_white.png" width="60"></a></div>
+      </div>
+    </div>
+  </div>
+
+  <script src= "/webapps/oas/static/assets/js/prism.js"></script>
+  <script src="https://code.jquery.com/jquery-3.3.1.js"></script>
+  <script src="https://cdn.datatables.net/1.10.20/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/js/bootstrap.min.js" integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy" crossorigin="anonymous" style=""></script>
+  
+  
+  
+
+</body>
+</html>

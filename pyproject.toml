@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sourcerer"
+dynamic = ["version"]
+description = "Download data from online immune repertoire databases and format it for Immcantation"
+readme = "README.rst"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "Susanna Marquez"}]
+keywords = ["AIRR", "antibody", "repertoire", "immcantation", "OAS"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+# NB: the airr floor is 2.0 because the streaming validation report depends on
+# RearrangementSchema.validate_header/validate_row. This still satisfies changeo's
+# airr>=1.3.1, so the two coexist in the Immcantation container.
+#
+# NB: the pandas floor is 2.2.3 (not the older 1.5 that satisfies our own code)
+# because pandas wheels built before numpy 2.0 existed are ABI-incompatible with
+# a numpy>=2 runtime: pip resolves the newest numpy that satisfies pandas's own
+# (unbounded) requirement, so an older pandas floor gets paired with a numpy it
+# was never built against. 2.2.3 is the first pandas release built for numpy 2.x.
+dependencies = [
+    "requests>=2.28",
+    "beautifulsoup4>=4.11",
+    "PyYAML>=6.0",
+    "pandas>=2.2.3",
+    "airr>=2.0",
+    "tqdm>=4.64",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.5"]
+
+[project.scripts]
+sourcerer = "sourcerer.Cli:main"
+
+[project.urls]
+Homepage = "https://immcantation.readthedocs.io"
+
+[tool.hatch.version]
+path = "src/sourcerer/Version.py"
+
+[tool.hatch.build.targets.wheel]
+# The schema snapshots under src/sourcerer/data are package data and ship
+# automatically as part of the package. Do not add a force-include for them: it
+# duplicates every file and the build fails.
+packages = ["src/sourcerer"]
+
+[tool.ruff]
+line-length = 90
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["I", "E1", "E4", "E7", "E9", "F", "UP", "N"]
+# These conflict with Immcantation's CONTRIBUTING.md, which the package follows
+# so that it reads like the rest of the framework rather than like a newer
+# outlier. Each is a deliberate house style choice, not an oversight.
+ignore = [
+    "N802",   # functions are lowerCamelCase (getArgParser, readDataUnit)
+    "N999",   # modules are UpperCamelCase (Http.py, Schema.py), as in Change-O
+    "N812",   # dataclasses.field is aliased to avoid shadowing a method name
+    "UP031",  # %-formatting is used throughout Change-O and pRESTO
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sourcerer"]

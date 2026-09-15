@@ -1,0 +1,42 @@
+name: check-apis
+
+# A weekly canary against the live IMGT and OGRDB APIs. It runs the same code a
+# user's download would, using the endpoint constants the sources define, so a
+# red run here is the early warning that an upstream API changed shape. It never
+# blocks a merge; it only watches. workflow_dispatch allows an on-demand check.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: check-apis
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+      - name: Probe the reference APIs
+        env:
+          SOURCERER_LIVE: '1'
+        run: python -m unittest tests.test_live -v
+      # On failure the run goes red and GitHub notifies the watchers. Opening an
+      # issue automatically is intentionally left off; enable the step below if a
+      # tracked issue is wanted instead of (or as well as) the email.
+      #
+      # - name: Open an issue on failure
+      #   if: failure()
+      #   uses: JasonEtco/create-an-issue@v2
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     filename: .github/api-breakage-issue.md

@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+docs/_build/
+dist/
+.venv/
+venv/
+.history/
+.ruff_cache/
+.pytest_cache/
+
+# Raw upstream payloads cached by `schema refresh --keep-raw`; never committed.
+*.raw.json
+
+# Nextflow run artifacts (created by running airrflow locally)
+.nextflow/
+.nextflow.log*
+work/
+airrflow.config
+
+# Local and temporary files
+*.code-workspace
+*\.local\.*
+tmp/

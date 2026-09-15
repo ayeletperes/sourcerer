@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- PAGE settings -->
+    <title>OAS: Observed Antibody Space</title>
+    <link href="/webapps/oas/static/assets/img/favicon.png" rel="shortcut icon" type="image/x-icon" />
+
+    <!-- CSS dependencies -->
+    <link rel="stylesheet" href="https://cdn.datatables.net/1.10.20/css/jquery.dataTables.min.css">
+    <link rel="stylesheet" href="/webapps/oas/static/assets/css/sabdab_theme.css">
+    <link rel="stylesheet" href="/webapps/oas/static/assets/css/oas_theme.css">
+    <link rel="stylesheet" href="/webapps/oas/static/assets/css/prism.css">
+    <!--<link href="https://myCDN.com/prism@v1.x/themes/prism.css" rel="stylesheet" /> -->
+
+    <link href="https://fonts.googleapis.com/css?family=Comfortaa|Josefin+Slab|Source+Code+Pro" rel="stylesheet"> 
+
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.0/css/all.css" integrity="sha384-lZN37f5QGtY3VHgisS14W3ExzMWZxybE1SJSEsQp9S+oqd12jhcu+A56Ebc1zFSJ" crossorigin="anonymous">
+
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-142143190-2"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'UA-142143190-2');
+    </script>
+
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-md navbar-light bg-light" style="border-bottom: 3px solid #002147;">
+        <div class="container"> 
+            <a class="navbar-brand text-primary" href="/webapps/oas/"><img class="img-fluid d-block" src="/webapps/oas/static/assets/img/OAS_logo.png" width="100"></a>
+            <button class="navbar-toggler navbar-toggler-right border-0" type="button" data-toggle="collapse" data-target="#navbar4">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+          
+            <div class="collapse navbar-collapse" id="navbar4">
+                <ul class="navbar-nav ml-auto">
+
+		    <li class="nav-item dropdown">
+			<a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#" role="button" aria-haspopup="true" aria-expanded="false">Unpaired Sequences</a>
+			<div class="dropdown-menu">
+			    <a class="dropdown-item" href="/webapps/oas/oas_unpaired/">Search</a>
+			    <a class="dropdown-item" href="/webapps/oas/downloads/">Downloads</a>
+			    <a class="dropdown-item" href="/webapps/oas/documentation/">Help</a>
+			</div>
+		    </li>
+
+		    <li class="nav-item dropdown">
+			<a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#" role="button" aria-haspopup="true" aria-expanded="false">Paired Sequences</a>
+			<div class="dropdown-menu">
+			    <a class="dropdown-item" href="/webapps/oas/oas_paired/">Search</a>
+			    <a class="dropdown-item" href="/webapps/oas/downloads_paired/">Downloads</a>
+			    <a class="dropdown-item" href="/webapps/oas/documentation_paired/">Help</a>
+			</div>
+		    </li>
+
+		    <!--<li class="nav-item">
+			<a class="nav-link" href="/webapps/oas/oas_unpaired/">Search</a>
+		    </li>
+
+                    <li class="nav-item">
+                        <a class="nav-link" href="/webapps/oas/downloads/" role="button" aria-haspopup="true" aria-expanded="false">Downloads</a>
+                    </li>
+                
+                    <li class="nav-item">
+                        <a class="nav-link" href="/webapps/oas/documentation/" role="button" aria-haspopup="true" aria-expanded="false">Help</a>
+		    </li>-->
+
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#" role="button" aria-haspopup="true" aria-expanded="false">More OPIG Resources...</a>
+                        <div class="dropdown-menu">
+                            <a class="dropdown-item" href="http://opig.stats.ox.ac.uk/webapps/sabdab" target="_blank">SAbDab</a>
+                            <a class="dropdown-item" href="http://opig.stats.ox.ac.uk/webapps/sabpred" target="_blank">SAbPred</a>
+                            <a class="dropdown-item" href="http://opig.stats.ox.ac.uk/webapps/stcrdab" target="_blank">STCRDab</a>
+                        </div>
+                    </li>
+
+                </ul>
+            </div>
+        </div>
+    </nav>
+  
+  <button onclick="topFunction()" id="topBtn" title="Go to top">^</button>
+  
+  
+<div class="text-center py-1 bg-primary shadow-none" style="	background-image: url(/webapps/oas/static/assets/img/Vander_Heiden_Fotor.png);	background-position: center;	background-size: cover;	background-repeat: repeat;	box-shadow: 0px 0px 4px  black; border: 3px solid #002147; border-top: 0px solid #002147;">
+    <div class="container">
+      <div class="row justify-content-center rounded my-5 mx-5 shadow-none" style="	box-shadow: 0px 0px 4px  black; border: 3px solid #002147; background-color: #002147; color: #ffffff;">
+        <div class="col-md-9 pt-4 pb-4">
+		<h1 style="">Search OAS:</br>Paired Sequences</h1>
+        </div>
+      </div>
+    </div>
+</div>
+
+<div class="container">
+    <div class="row">
+        <div class="col-md-12 pt-4 pb-4" id="sections">
+            
+                <div class="accordion-group" id = "about">
+                    <a class="accordion-toggle" data-toggle="collapse" data-parent="#about" href="#collapseAbout" style="color: #002147;">
+                        <div class="accordion-heading" style="background-color: #002147; color: #ffffff;">
+                            <font color="#64CCF8">></font>&nbsp;&nbsp; About
+                        </div>
+                    </a>
+                        
+                    <div id="collapseAbout" class="accordion-body collapse show">
+                            
+                        <div class="accordion-inner">
+                            
+                            <ul>
+				    <li>Use this form to search for sets of <b><span style="color:#00A8AA;">paired</span></b> sequences within OAS.</li>
+                                <li>The search fields are not exclusive, so if you pick a combination of fields that does not exist in our database, it will yield no results.</li>
+				<li>All of the paired sequences contained within the OAS database can be downloaded by searching without using any attributes.</li>
+				<li>For more help, see the <a href="/webapps/oas/documentation_paired/">Help</a> page.</li>
+                            </ul>
+                            
+                        </div>
+                    </div>
+                </div>
+            
+                <div class="accordion" id="accordion1">
+
+                    <div class="accordion-group" id = "group3">
+                        <a class="accordion-toggle" data-toggle="collapse" data-parent="#accordion1" href="#collapseThree">
+                        <div class="accordion-heading">
+                            <font color="#64CCF8">></font>&nbsp;&nbsp; Search OAS sequences by attribute
+                        </div>
+                        </a>
+                        <div id="collapseThree" class="accordion-body collapse show">
+                            <div class="accordion-inner">
+                            
+                                <form method="post" enctype="multipart/form-data">
+                                    <div class="form-group">
+                                        
+					    
+                                        
+					    
+                                            <div class="form-field">
+                                                <label for="organism">Species: 
+                                                    <span data-toggle="tooltip" data-placement="right" title="The species being sequenced"><i class="fas fa-question-circle"></i></span>
+                                               </label>
+                                            </div>
+                                            
+                                            <div class="form-select">
+                                                <select class="form-control custom-select" id="organism" name="Species">
+                                                    <option value="*">*</option>
+                                                    
+                                                        <option value=mouse_C57BL/6>mouse_C57BL/6</option>
+                                                    
+                                                        <option value=human>human</option>
+                                                    
+                                                        <option value=mouse_BALB/c>mouse_BALB/c</option>
+                                                    
+                                                        <option value=rat_SD>rat_SD</option>
+                                                    
+                                                </select>
+                                            </div></br>
+					    
+                                        
+					    
+                                            <div class="form-field">
+                                                <label for="organism">Age: 
+                                                    <span data-toggle="tooltip" data-placement="right" title="Indicates if the age of the individual was recorded"><i class="fas fa-question-circle"></i></span>
+                                               </label>
+                                            </div>
+                                            
+                                            <div class="form-select">
+                                                <select class="form-control custom-select" id="organism" name="Age">
+                                                    <option value="*">*</option>
+                                                    
+                                                        <option value=defined>defined</option>
+                                                    
+                                                        <option value=undefined>undefined</option>
+                                                    
+                                                </select>
+                                            </div></br>
+					    
+                                        
+					    
+                                            <div class="form-field">
+                                                <label for="organism">BSource: 
+                                                    <span data-toggle="tooltip" data-placement="right" title="Organ or tissue from where the B-cells were collected"><i class="fas fa-question-circle"></i></span>
+                                               </label>
+                                            </div>
+                                            
+                                            <div class="form-select">
+                                                <select class="form-control custom-select" id="organism" name="BSource">
+                                                    <option value="*">*</option>
+                                                    
+                                                        <option value=Lymph>Lymph</option>
+                                                    
+                                                        <option value=PBMC>PBMC</option>
+                                                    
+                                                        <option value=Tonsillectomy>Tonsillectomy</option>
+                                                    
+                                                        <option value=caecum>caecum</option>
+                                                    
+                                                        <option value=transverse-colon>transverse-colon</option>
+                                                    
+                                                        <option value=sigmoid-colon>sigmoid-colon</option>
+                                                    
+                                                        <option value=mesenteric-lymph-node>mesenteric-lymph-node</option>
+                                                    
+                                                        <option value=CSF>CSF</option>
+                                                    
+                                                        <option value=Tumor mass>Tumor mass</option>
+                                                    
+                                                        <option value=Pleural Effusion>Pleural Effusion</option>
+                                                    
+                                                        <option value=Ascites>Ascites</option>
+                                                    
+                                                        <option value=FNA>FNA</option>
+                                                    
+                                                        <option value=Bone-Marrow>Bone-Marrow</option>
+                                                    
+                                                        <option value=Duodenal-organoid>Duodenal-organoid</option>
+                                                    
+                                                </select>
+                                            </div></br>
+					    
+                                        
+					    
+                                            <div class="form-field">
+                                                <label for="organism">BType: 
+                                                    <span data-toggle="tooltip" data-placement="right" title="Type of B-cell"><i class="fas fa-question-circle"></i></span>
+                                               </label>
+                                            </div>
+                                            
+                                            <div class="form-select">
+                                                <select class="form-control custom-select" id="organism" name="BType">
+                                                    <option value="*">*</option>
+                                                    
+                                                        <option value=Plasmablast>Plasmablast</option>
+                                                    
+                                                        <option value=RV+B-Cells>RV+B-Cells</option>
+                                                    
+                                                        <option value=Unsorted-B-Cells>Unsorted-B-Cells</option>
+                                                    
+                                                        <option value=Naive-B-Cells>Naive-B-Cells</option>
+                                                    
+                                                        <option value=Memory-B-Cells>Memory-B-Cells</option>
+                                                    
+                                                        <option value=ASC>ASC</option>
+                                                    
+                                                        <option value=Plasma-B-Cells>Plasma-B-Cells</option>
+                                                    
+                                                        <option value=Plasmablast/Plasma-B-Cells>Plasmablast/Plasma-B-Cells</option>
+                                                    
+                                                        <option value=CD27-memory-and-Plasmablast/Plasma-B-Cells>CD27-memory-and-Plasmablast/Plasma-B-Cells</option>
+                                                    
+                                                        <option value=double-nagative-B-cells>double-nagative-B-cells</option>
+                                                    
+                                                        <option value=Lymphoma-B-Cells>Lymphoma-B-Cells</option>
+                                                    
+                                                        <option value=Plasmablasts\, Memory B cells and activated T cells>Plasmablasts\, Memory B cells and activated T cells</option>
+                                                    
+                                                        <option value=B cells>B cells</option>
+                                                    
+                                                        <option value=Plasma cells and Memory B cells>Plasma cells and Memory B cells</option>
+                                                    
+                                                        <option value=Memory B cells>Memory B cells</option>
+                                                    
+                                                        <option value=Plasma cells>Plasma cells</option>
+                                                    
+                                                        <option value=Plasmablasts and Memory B cells>Plasmablasts and Memory B cells</option>
+                                                    
+                                                        <option value=CLIP 2d Stimulated B cells>CLIP 2d Stimulated B cells</option>
+                                                    
+                                                        <option value=Gliadin 2d Stimulated B cells>Gliadin 2d Stimulated B cells</option>
+                                                    
+                                                        <option value=control Stimulated B cells>control Stimulated B cells</option>
+                                                    
+                                                </select>
+                                            </div></br>
+					    
+                                        
+					    
+                                            <div class="form-field">
+                                                <label for="organism">Vaccine: 
+                                                    <span data-toggle="tooltip" data-placement="right" title="Indicates whether the individual was vaccinated"><i class="fas fa-question-circle"></i></span>
+                                               </label>
+                                            </div>
+                                            
+                                            <div class="form-select">
+                                                <select class="form-control custom-select" id="organism" name="Vaccine">
+                                                    <option value="*">*</option>
+                                                    
+                                                        <option value=None>None</option>
+                                                    
+                                                        <option value=OVA>OVA</option>
+                                                    
+                                                        <option value=Comirnaty>Comirnaty</option>
+                                                    
+                                                        <option value=Comirnaty/Comirnaty>Comirnaty/Comirnaty</option>
+                                                    
+                                                        <option value=DTP>DTP</option>
+                                                    
+                                                        <option value=COVID-19/Comirnaty>COVID-19/Comirnaty</option>
+                                                    
+                                                        <option value=Comirnaty/Comirnaty/Comirnaty>Comirnaty/Comirnaty/Comirnaty</option>
+                                                    
+                                                        <option value=Vaxzevria/Comirnaty>Vaxzevria/Comirnaty</option>
+                                                    
+                                                        <option value=Vaxzevria>Vaxzevria</option>
+                                                    
+                                                        <option value=Seasonal-influenza-vaccine>Seasonal-influenza-vaccine</option>
+                                                    
+                                                        <option value=SARS-COV-2>SARS-COV-2</option>
+                                                    
+                                                </select>
+                                            </div></br>
+					    
+                                        
+					    
+                                            <div class="form-field">
+                                                <label for="organism">Disease: 
+                                                    <span data-toggle="tooltip" data-placement="right" title="Indicates whether individuals were diseased at the time of sequencing"><i class="fas fa-question-circle"></i></span>
+                                               </label>
+                                            </div>
+                                            
+                                            <div class="form-select">
+                                                <select class="form-control custom-select" id="organism" name="Disease">
+                                                    <option value="*">*</option>
+                                                    
+                                                        <option value=SARS-COV-2>SARS-COV-2</option>
+                                                    
+                                                        <option value=None>None</option>
+                                                    
+                                                        <option value=CMV>CMV</option>
+                                                    
+                                                        <option value=Obstructive-Sleep-Apnea>Obstructive-Sleep-Apnea</option>
+                                                    
+                                                        <option value=Tonsillitis>Tonsillitis</option>
+                                                    
+                                                        <option value=Tonsillitis/Obstructive-Sleep-Apnea>Tonsillitis/Obstructive-Sleep-Apnea</option>
+                                                    
+                                                        <option value=HIV>HIV</option>
+                                                    
+                                                        <option value=Multiple-sclerosis>Multiple-sclerosis</option>
+                                                    
+                                                        <option value=Burkitt Lymphoma>Burkitt Lymphoma</option>
+                                                    
+                                                        <option value=Primary Antiphospholipid Syndrome>Primary Antiphospholipid Syndrome</option>
+                                                    
+                                                        <option value=Vaccine convalescent>Vaccine convalescent</option>
+                                                    
+                                                        <option value=Mowat-Wilson syndrome>Mowat-Wilson syndrome</option>
+                                                    
+                                                        <option value=Allergy>Allergy</option>
+                                                    
+                                                        <option value=Peanut allergy>Peanut allergy</option>
+                                                    
+                                                        <option value=Coeliac>Coeliac</option>
+                                                    
+                                                </select>
+                                            </div></br>
+					    
+                                        
+					    
+                                            <div class="form-field">
+                                                <label for="organism">Subject: 
+                                                    <span data-toggle="tooltip" data-placement="right" title="Indicates whether sequences can be traced to a particular individual"><i class="fas fa-question-circle"></i></span>
+                                               </label>
+                                            </div>
+                                            
+                                            <div class="form-select">
+                                                <select class="form-control custom-select" id="organism" name="Subject">
+                                                    <option value="*">*</option>
+                                                    
+                                                        <option value=defined>defined</option>
+                                                    
+                                                        <option value=undefined>undefined</option>
+                                                    
+                                                </select>
+                                            </div></br>
+					    
+                                        
+					    
+                                            <div class="form-field">
+                                                <label for="organism">Longitudinal: 
+                                                    <span data-toggle="tooltip" data-placement="right" title="Indicates whether the study was carried out over several time points"><i class="fas fa-question-circle"></i></span>
+                                               </label>
+                                            </div>
+                                            
+                                            <div class="form-select">
+                                                <select class="form-control custom-select" id="organism" name="Longitudinal">
+                                                    <option value="*">*</option>
+                                                    
+                                                        <option value=defined>defined</option>
+                                                    
+                                                        <option value=undefined>undefined</option>
+                                                    
+                                                </select>
+                                            </div></br>
+					    
+                                        
+					    
+                                        
+					    
+                                        
+					    
+                                        
+                                    </div><br>
+							    
+							    <div style="text-align:center;">
+							    <button type="submit" class="btn btn-default">Search</button>
+							    </div>
+							    
+							    </form>
+                                
+                                                   
+                                    </div>
+                                </form>
+                            </div> <!-- accordion-inner -->
+                        </div> <!-- accordion heading -->
+                    </div> <!-- Group3 -->
+                    
+
+                </div> <!-- End of accordion1 -->
+            </div> <!-- End of dbsearch section -->
+        </div> <!-- End of span9 -->
+    </div> <!-- End of row -->
+</div>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+<script>
+$(document).ready(function(){
+  $('[data-toggle="tooltip"]').tooltip(); 
+});
+</script>
+
+
+  
+  <div class="py-5" style="background-color: #002147; color: #ffffff;">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-8 txt-center">
+	  <p>Updated OAS paper: Olsen, T.H., Boyles, F., and Deane C.M. (2021). Protein Science. <a href="https://doi.org/10.1002/pro.4205">[link]</a></p>
+          <p>The current OAS is an update of the previous paper: Kovaltsuk, A., Leem, J. et al (2018). J. Immunol. <a href="https://doi.org/10.4049/jimmunol.1800708">[link]</a></p>
+       
+        </div>
+        <div class="col-md-4"><a href="http://opig.stats.ox.ac.uk/" target="_blank"><img class="img-fluid d-block img-flexipos" src="/webapps/oas/static/assets/img/OPIG_logo_white.png" width="60"></a></div>
+      </div>
+    </div>
+  </div>
+
+  <script src= "/webapps/oas/static/assets/js/prism.js"></script>
+  <script src="https://code.jquery.com/jquery-3.3.1.js"></script>
+  <script src="https://cdn.datatables.net/1.10.20/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
+  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/js/bootstrap.min.js" integrity="sha384-ChfqqxuZUCnJSK3+MXmPNIyE6ZbWh2IMqE241rYiqJxyMiZ6OW/JmZQ5stwEULTy" crossorigin="anonymous" style=""></script>
+  
+  
+    <script src="/webapps/oas/static/js/bootstrap-modal.js"></script>
+
+
+</body>
+</html>

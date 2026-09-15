@@ -1,0 +1,31 @@
+collections:
+  human:
+    fields:
+    - name: locus
+      pseudo_values: false
+      values:
+      - IGH
+      - IGK
+      - IGL
+      wildcard: '*'
+    reported_totals: {}
+  mouse:
+    fields:
+    - name: locus
+      pseudo_values: false
+      values:
+      - IGH
+      - IGK
+      - IGL
+      wildcard: '*'
+    reported_totals: {}
+field_aliases: {}
+harvested: '2026-08-06T00:00:00Z'
+harvested_by: sourcerer 0.1.0
+parse_contracts:
+  segment_split: V,C gapped; D,J ungapped; delta D vs C by length
+schema_version: 1
+source: ogrdb
+source_urls:
+  api: https://ogrdb.airr-community.org/api_v2
+url_rules: {}

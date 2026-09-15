@@ -1,0 +1,17 @@
+collections:
+  human:
+    fields: []
+    reported_totals: {}
+  mouse:
+    fields: []
+    reported_totals: {}
+field_aliases: {}
+harvested: '2026-08-06T00:00:00Z'
+harvested_by: sourcerer 0.1.0
+parse_contracts: {}
+schema_version: 1
+source: airrc-imgt
+source_urls:
+  imgt: imgt
+  ogrdb: ogrdb
+url_rules: {}

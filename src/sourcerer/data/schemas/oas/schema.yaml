@@ -1,0 +1,283 @@
+collections:
+  paired:
+    fields:
+    - name: Species
+      pseudo_values: false
+      values:
+      - mouse_C57BL/6
+      - human
+      - mouse_BALB/c
+      - rat_SD
+      wildcard: '*'
+    - name: Age
+      pseudo_values: true
+      values: []
+      wildcard: '*'
+    - name: BSource
+      pseudo_values: false
+      values:
+      - Lymph
+      - PBMC
+      - Tonsillectomy
+      - caecum
+      - transverse-colon
+      - sigmoid-colon
+      - mesenteric-lymph-node
+      - CSF
+      - Tumor mass
+      - Pleural Effusion
+      - Ascites
+      - FNA
+      - Bone-Marrow
+      - Duodenal-organoid
+      wildcard: '*'
+    - name: BType
+      pseudo_values: false
+      values:
+      - Plasmablast
+      - RV+B-Cells
+      - Unsorted-B-Cells
+      - Naive-B-Cells
+      - Memory-B-Cells
+      - ASC
+      - Plasma-B-Cells
+      - Plasmablast/Plasma-B-Cells
+      - CD27-memory-and-Plasmablast/Plasma-B-Cells
+      - double-nagative-B-cells
+      - Lymphoma-B-Cells
+      - Plasmablasts, Memory B cells and activated T cells
+      - B cells
+      - Plasma cells and Memory B cells
+      - Memory B cells
+      - Plasma cells
+      - Plasmablasts and Memory B cells
+      - CLIP 2d Stimulated B cells
+      - Gliadin 2d Stimulated B cells
+      - control Stimulated B cells
+      wildcard: '*'
+    - name: Vaccine
+      pseudo_values: false
+      values:
+      - None
+      - OVA
+      - Comirnaty
+      - Comirnaty/Comirnaty
+      - DTP
+      - COVID-19/Comirnaty
+      - Comirnaty/Comirnaty/Comirnaty
+      - Vaxzevria/Comirnaty
+      - Vaxzevria
+      - Seasonal-influenza-vaccine
+      - SARS-COV-2
+      wildcard: '*'
+    - name: Disease
+      pseudo_values: false
+      values:
+      - SARS-COV-2
+      - None
+      - CMV
+      - Obstructive-Sleep-Apnea
+      - Tonsillitis
+      - Tonsillitis/Obstructive-Sleep-Apnea
+      - HIV
+      - Multiple-sclerosis
+      - Burkitt Lymphoma
+      - Primary Antiphospholipid Syndrome
+      - Vaccine convalescent
+      - Mowat-Wilson syndrome
+      - Allergy
+      - Peanut allergy
+      - Coeliac
+      wildcard: '*'
+    - name: Subject
+      pseudo_values: true
+      values: []
+      wildcard: '*'
+    - name: Longitudinal
+      pseudo_values: true
+      values: []
+      wildcard: '*'
+    reported_totals: {}
+  unpaired:
+    fields:
+    - name: Species
+      pseudo_values: false
+      values:
+      - rabbit
+      - human
+      - mouse_C57BL/6
+      - rhesus
+      - mouse_BALB/c
+      - mouse
+      - bactrian_camel
+      - Kymouse
+      - rat
+      - HIS-Mouse
+      - mouse_RAG2-GFP/129Sve
+      - mouse_Swiss-Webster
+      wildcard: '*'
+    - name: BSource
+      pseudo_values: false
+      values:
+      - Spleen
+      - PBMC
+      - Bone-Marrow
+      - LeukoPak
+      - Spleen/Bone-Marrow
+      - Tonsillectomy
+      - Nasal-Biopsy
+      - Biopsy-Small-Intestine
+      - Ileum
+      - Colon
+      - Jejunum
+      - Lung
+      - Mesenteric-Lymph-Node
+      - Nasopharyngeal-Swab
+      - Biopsy
+      - Cerebrospinal-Fluid
+      - Peritoneal-Cavity
+      - Cervical-Lymph-Node
+      - Brain-Lesion
+      - Pia-Mater
+      - Choroid-Plexus
+      - Cortex
+      - Lymph
+      - Cord-Blood-Cells
+      - Lamina-Propria
+      - PBMC/Nasal-Biopsy
+      wildcard: '*'
+    - name: BType
+      pseudo_values: false
+      values:
+      - Unsorted-B-Cells
+      - Pro-B-Cells
+      - Memory-B-Cells
+      - Plasmablast
+      - RV+B-Cells
+      - Naive-B-Cells
+      - Plasma-B-Cells
+      - Plasmablast/Plasma-B-Cells
+      - ASC
+      - Pre-B-Cells
+      - Naive-B-Cell/Plasmablast
+      - Germlinal-Center-B-Cells
+      - Immature-B-Cells
+      - B-1a-Cells
+      - B-1b-Cells
+      - B-2-Cells
+      - MZ-Cells
+      - FO-Cells
+      wildcard: '*'
+    - name: Longitudinal
+      pseudo_values: true
+      values: []
+      wildcard: '*'
+    - name: Age
+      pseudo_values: true
+      values: []
+      wildcard: '*'
+    - name: Disease
+      pseudo_values: false
+      values:
+      - None
+      - CLL
+      - POEMS
+      - SARS-COV-2
+      - HIV
+      - Light-Chain-Amyloidosis
+      - Ebola
+      - HCV
+      - Healthy/celiac-disease
+      - CMV
+      - Tonsillitis
+      - Obstructive-Sleep-Apnea
+      - Tonsillitis/Obstructive-Sleep-Apnea
+      - Allergy/NoSIT
+      - Allergy/SIT
+      - EBV
+      - CMV/EBV
+      - Asthma
+      - MS
+      - Dengue
+      - Non-Dengue-Febrile-Illness
+      - SLE
+      - MuSK-MG
+      - AChR-MG
+      - Allergic-Rhinitis-Out-Of-Season
+      - Allergic-Rhinitis-In-Season
+      wildcard: '*'
+    - name: Subject
+      pseudo_values: true
+      values: []
+      wildcard: '*'
+    - name: Vaccine
+      pseudo_values: false
+      values:
+      - HIV
+      - None
+      - NP-CGG
+      - TIV
+      - Plasmodium
+      - MenACWY-conjugate
+      - MenACWY-polysaccharide
+      - HepB
+      - pH1N1-AS03
+      - pH1N1
+      - NP-HEL
+      - OVA
+      - Flu
+      - HepB/HepA/Flu
+      - Tetanus/Flu
+      - E.Coli/Lactobacillus/Clostridia
+      - RSV
+      - Tetanus
+      - SARS-COV-2
+      - HuD
+      - DNP
+      - Sheep-erythrocytes
+      - NP-CGG/Bacterial-Colonizaion
+      wildcard: '*'
+    - name: Chain
+      pseudo_values: false
+      values:
+      - Heavy
+      - Light
+      wildcard: '*'
+    - name: Isotype
+      pseudo_values: false
+      values:
+      - Bulk
+      - IGHA
+      - IGHG
+      - IGHM
+      - IGHD
+      - IGHE
+      - Missing_c_domain
+      wildcard: '*'
+    - name: Primer
+      pseudo_values: false
+      values:
+      - nested
+      wildcard: '*'
+    reported_totals: {}
+field_aliases:
+  '#Unique Sequences': Unique sequences
+  DS Name: Study
+  Individual: Subject
+  Organism: Species
+harvested: '2026-08-04T14:40:49Z'
+harvested_by: sourcerer 0.1.0
+parse_contracts:
+  count_regex: yielded\s*<b>([\d,]+)</b>\s*filtered sequences from\s*<b>([\d,]+)</b>\s*studies
+  csv_array_marker: var CSV = [
+  detail_link_pattern: \.\./dataunit_(paired|unpaired)\?unit=
+schema_version: 1
+source: oas
+source_urls:
+  catalog: https://opig.stats.ox.ac.uk/webapps/ngsdb/oas_metadata_map.json
+  download_base: https://opig.stats.ox.ac.uk/webapps/ngsdb/
+  paired_form: https://opig.stats.ox.ac.uk/webapps/oas/oas_paired/
+  unpaired_form: https://opig.stats.ox.ac.uk/webapps/oas/oas_unpaired/
+url_rules:
+  catalog_key_prefix: /vols/naga-datasets/oas/
+  download_prefix: https://opig.stats.ox.ac.uk/webapps/ngsdb/

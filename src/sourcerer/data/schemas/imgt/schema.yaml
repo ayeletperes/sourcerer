@@ -1,0 +1,57 @@
+collections:
+  human:
+    fields:
+    - name: locus
+      pseudo_values: false
+      values:
+      - IGH
+      - IGK
+      - IGL
+      - TRA
+      - TRB
+      - TRG
+      - TRD
+      wildcard: '*'
+    - name: segment
+      pseudo_values: false
+      values:
+      - V
+      - D
+      - J
+      - C
+      wildcard: '*'
+    reported_totals: {}
+  mouse:
+    fields:
+    - name: locus
+      pseudo_values: false
+      values:
+      - IGH
+      - IGK
+      - IGL
+      - TRA
+      - TRB
+      - TRG
+      - TRD
+      wildcard: '*'
+    - name: segment
+      pseudo_values: false
+      values:
+      - V
+      - D
+      - J
+      - C
+      wildcard: '*'
+    reported_totals: {}
+field_aliases: {}
+harvested: '2026-08-06T00:00:00Z'
+harvested_by: sourcerer 0.1.0
+parse_contracts:
+  fasta_block: second <pre> element
+  header: pipe-delimited, allele in field 2
+schema_version: 1
+source: imgt
+source_urls:
+  genelect: https://www.imgt.org/genedb/GENElect
+  release: https://www.imgt.org/download/GENE-DB/RELEASE
+url_rules: {}

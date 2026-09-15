@@ -1,0 +1,19 @@
+/* override table width restrictions */
+@media screen and (min-width: 767px) {
+
+   .wy-table-responsive table td {
+      /* !important prevents the common CSS stylesheets from overriding
+         this as on RTD they are loaded after this stylesheet */
+      white-space: normal !important;
+   }
+
+   .wy-table-responsive {
+      overflow: visible !important;
+   }
+}
+
+.rst-content .admonition-announcement .admonition-title .fa-info-circle:before{content:"\f0a1"} 
+.rst-content
+.fa-search-plus:before, .rst-content .admonition-announcement .admonition-title:before, .wy-inline-validate.wy-inline-validate-info .wy-input-context:before, .wy-inline-validate.wy-inline-validate-warning .wy-input-context:before {
+    content: "\f0a1";
+}

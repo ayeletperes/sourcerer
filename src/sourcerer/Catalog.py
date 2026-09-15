@@ -21,14 +21,6 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-#: Columns every catalog carries, in output order. Trailing columns may be empty:
-#: run is absent from most paired filenames, and the enrichment columns are only
-#: populated once a unit's detail page has been read.
-CATALOG_COLUMNS = ('unit_id', 'collection', 'url', 'dir_segment', 'study', 'run',
-                   'n_unique_sequences', 'Species', 'Isotype', 'Chain', 'Disease',
-                   'Vaccine', 'Subject', 'Age', 'Longitudinal', 'BSource', 'BType',
-                   'Author', 'detail_status', 'detail_attempted')
-
 #: Value of detail_status meaning the unit's detail page has been read.
 DETAIL_OK = 'ok'
 
@@ -51,7 +43,7 @@ def loadCatalog(path):
         return list(csv.DictReader(handle, delimiter='\t'))
 
 
-def saveCatalog(rows, path, columns=CATALOG_COLUMNS):
+def saveCatalog(rows, path, columns):
     """
     Write a catalog deterministically.
 
@@ -66,7 +58,8 @@ def saveCatalog(rows, path, columns=CATALOG_COLUMNS):
     Arguments:
       rows (iterable): dicts of column to value.
       path (Path): where to write.
-      columns (tuple): the column order.
+      columns (tuple): the column order -- a source's catalog_columns, this
+        module carries no catalog schema of its own.
 
     Returns:
       tuple: (Path, changed) where changed is False if the file was left alone.
@@ -94,7 +87,7 @@ def saveCatalog(rows, path, columns=CATALOG_COLUMNS):
     return path, True
 
 
-def mergeEnrichment(existing, fresh):
+def mergeEnrichment(existing, fresh, columns):
     """
     Carry forward enrichment that a new harvest did not manage to fetch.
 
@@ -105,6 +98,9 @@ def mergeEnrichment(existing, fresh):
     Arguments:
       existing (list): rows from the stored catalog.
       fresh (list): rows from the current harvest.
+      columns (iterable): which columns are detail-page enrichment for this
+        source -- a source's enrichment_columns, this module carries no list
+        of its own.
 
     Returns:
       list: fresh rows with previously known enrichment preserved.
@@ -115,7 +111,7 @@ def mergeEnrichment(existing, fresh):
     for row in fresh:
         old = previous.get(row.get('unit_id'))
         if old is not None:
-            for column in ('BSource', 'BType', 'Author'):
+            for column in columns:
                 if not row.get(column) and old.get(column):
                     row[column] = old[column]
             if not row.get('detail_status') and old.get('detail_status'):

@@ -7,7 +7,6 @@ __author__ = 'Susanna Marquez'
 
 # Imports
 import contextlib
-import csv
 import io
 import shutil
 import tempfile
@@ -22,24 +21,20 @@ import yaml
 # Sourcerer imports
 from sourcerer import Provenance, Reference, Schema
 from sourcerer.Cli import (
-    NCBI_EVIDENCE_COLUMNS,
     applyPins,
     formatUnitTable,
     getArgParser,
     handleDownload,
-    handleOasVerify,
     handleReferenceDiff,
     handleReferenceDownload,
     handleReferenceShow,
     loadMap,
 )
 from sourcerer.Exceptions import SourcererError
-from sourcerer.Http import HttpClient
-from sourcerer.Sources.Base import DataUnit, DownloadResult, Query, SourceBase
+from sourcerer.Sources.Base import DataUnit, DownloadResult, Query
 from sourcerer.Sources.Imgt import ImgtSource
 from sourcerer.Sources.Oas import OasSource, newReport
 from sourcerer.Sources.Ogrdb import OgrdbSource
-from tests.FakeHttp import FakeResponse, FakeSession
 
 
 class TestArgParser(unittest.TestCase):
@@ -186,7 +181,9 @@ class TestFormatUnitTable(unittest.TestCase):
         The table carries enough metadata to pick units without --out.
 
         unit_id and a count alone left the user unable to tell one donor's
-        run from another's without first saving a catalog.
+        run from another's without first saving a catalog. Which columns to
+        show is the caller's choice (see handleSearch, which passes a
+        source's own search_columns); OAS's are used here as a stand-in.
         """
         units = [DataUnit(unit_id='A_2020/csv/a.csv.gz', collection='paired',
                           url='u', n_sequences=12,
@@ -195,7 +192,7 @@ class TestFormatUnitTable(unittest.TestCase):
                  DataUnit(unit_id='B_2021/csv/b.csv.gz', collection='paired',
                           url='u', n_sequences=None, metadata={})]
 
-        lines = formatUnitTable(units).split('\n')
+        lines = formatUnitTable(units, columns=OasSource.search_columns).split('\n')
 
         self.assertEqual(lines[0].split(),
                          ['unit_id', 'n_unique_sequences', 'Species', 'Disease',
@@ -207,17 +204,32 @@ class TestFormatUnitTable(unittest.TestCase):
         self.assertTrue(lines[2].startswith('B_2021/csv/b.csv.gz'))
         self.assertEqual(len(lines), 3)
 
+    def test_defaults_to_no_extra_columns(self):
+        """
+        With no columns given, the table carries only identifier and count.
 
-class StubSource(SourceBase):
+        A generic default here would have to guess at some source's metadata
+        keys; a source with nothing to show should not get blank columns.
+        """
+        units = [DataUnit(unit_id='A_2020/csv/a.csv.gz', collection='human',
+                          url='u', n_sequences=1, metadata={'species': 'human'})]
+
+        lines = formatUnitTable(units).split('\n')
+
+        self.assertEqual(lines[0].split(), ['unit_id', 'n_unique_sequences'])
+
+
+class StubSource(OasSource):
     """
     A source that serves one unit from memory.
 
     Only the seams handleDownload actually touches are real: the network and the
     gzip reader are replaced, so the test exercises the command's bookkeeping
-    rather than OAS parsing, which test_Oas covers.
+    rather than OAS parsing, which test_Oas covers. Subclassing OasSource
+    rather than SourceBase gets samplesheetRow and countUnresolvedSubjects for
+    free, matching the real oas source these stubs stand in for.
     """
 
-    name = 'oas'
     description = 'stub'
     collections = ('paired', 'unpaired')
 
@@ -381,7 +393,7 @@ class TestHandleDownload(unittest.TestCase):
         self.assertEqual(len(fasta), 4)
 
 
-class TwoUnitStubSource(SourceBase):
+class TwoUnitStubSource(OasSource):
     """
     A source serving two units with distinct conversion reports.
 
@@ -392,7 +404,6 @@ class TwoUnitStubSource(SourceBase):
     whichever unit happened to run last.
     """
 
-    name = 'oas'
     description = 'stub'
     collections = ('paired',)
 
@@ -495,261 +506,6 @@ class TestConversionReportProvenance(unittest.TestCase):
 
         self.assertEqual(self.lastRun()['schema_fingerprint'],
                          Schema.fingerprint('oas'))
-
-
-#: A samplesheet header narrow enough for verify's own tests: it only reads
-#: sample_id, sample_name and subject_id, so the rest is set dressing.
-VERIFY_COLUMNS = ('sample_id', 'filename', 'subject_id', 'species', 'sample_name')
-
-#: One esearch/esummary/efetch round trip resolving SRR1 to BL-110_VDJ, the
-#: same fixture shape test_Ncbi.py exercises in isolation; this only checks
-#: that handleOasVerify wires it into the evidence TSV and --apply correctly.
-NCBI_ROUTES = {
-    'esearch': FakeResponse(200, b'<eSearchResult><IdList><Id>1</Id>'
-                                 b'</IdList></eSearchResult>'),
-    'esummary': FakeResponse(200,
-        b'<eSummaryResult><DocSum><Id>1</Id>'
-        b'<Item Name="ExpXml" Type="String">'
-        b'&lt;Summary&gt;&lt;Title&gt;GSM1: BL-110_VDJ&lt;/Title&gt;&lt;/Summary&gt;'
-        b'&lt;Biosample&gt;SAMN1&lt;/Biosample&gt;</Item>'
-        b'<Item Name="Runs" Type="String">'
-        b'&lt;Run acc="SRR1" total_spots="1"/&gt;</Item>'
-        b'</DocSum></eSummaryResult>'),
-    'efetch': FakeResponse(200,
-        b'<BioSampleSet><BioSample accession="SAMN1">'
-        b'<Ids><Id db="BioSample">SAMN1</Id></Ids>'
-        b'<Description><Title>BL-110_VDJ</Title></Description>'
-        b'</BioSample></BioSampleSet>'),
-}
-
-
-class TestHandleOasVerify(unittest.TestCase):
-    """
-    Tests for the verify command's evidence report
-    """
-
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.samplesheet = self.tmp / 'samplesheet_airrflow_airr.tsv'
-
-    def writeSamplesheet(self, rows):
-        """Write a samplesheet with just the columns verify needs."""
-        with open(self.samplesheet, 'w', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(VERIFY_COLUMNS),
-                                    delimiter='\t', lineterminator='\n')
-            writer.writeheader()
-            writer.writerows(rows)
-
-    def runVerify(self, extra_argv=()):
-        """Parse a real commandline and run the verify handler against a fake NCBI."""
-        argv = ['oas', 'verify', str(self.samplesheet)] + list(extra_argv)
-        args = getArgParser().parse_args(argv)
-
-        fake_client = HttpClient(delay=0, backoff=0,
-                                 session=FakeSession(lambda method, url, headers, i: next(
-                                     response for substring, response in NCBI_ROUTES.items()
-                                     if substring in url)))
-        with mock.patch('sourcerer.Cli.HttpClient', return_value=fake_client):
-            return handleOasVerify(args)
-
-    def readReport(self, path=None):
-        """Read back the evidence report as a list of dicts."""
-        path = path or self.samplesheet.with_name(
-            self.samplesheet.stem + '.ncbi_evidence' + self.samplesheet.suffix)
-        with open(path, newline='') as handle:
-            return list(csv.DictReader(handle, delimiter='\t'))
-
-    def test_a_real_subject_id_is_looked_up_too_and_compared(self):
-        """
-        A row that already has a subject_id is still cross-referenced.
-
-        OAS recording a subject is not proof it is correct -- a typo, a
-        short code reused across studies, or a pooled run naming several
-        donors under one value are all real failure modes -- so verify
-        looks the accession up regardless, and ncbi_sample_name always carries
-        NCBI's own text rather than a copy of subject_id. Here NCBI's
-        BL-110_VDJ has nothing in common with 'Donor-2', so subject_check
-        reports 'differs'.
-        """
-        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
-                               'subject_id': 'Donor-2', 'species': 'human',
-                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
-
-        self.assertEqual(self.runVerify(), 0)
-
-        rows = self.readReport()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['status'], 'ok')
-        self.assertEqual(rows[0]['ncbi_sample_name'], 'BL-110_VDJ')
-        self.assertEqual(rows[0]['ncbi_subject_suggested'], 'BL-110')
-        self.assertEqual(rows[0]['subject_check'], 'differs')
-
-    def test_a_real_subject_id_that_matches_ncbi_agrees(self):
-        """subject_check reports 'agrees' when subject_id is NCBI's own text."""
-        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
-                               'subject_id': 'BL-110', 'species': 'human',
-                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
-
-        self.assertEqual(self.runVerify(), 0)
-
-        rows = self.readReport()
-        self.assertEqual(rows[0]['subject_check'], 'agrees')
-
-    def test_a_pooled_subject_id_is_never_looked_up_as_a_single_subject(self):
-        """
-        OAS's own Subject field can itself name a pool of donors.
-
-        'donor 21; 22; 23 and 24' is exactly the shape OAS's paired catalog
-        uses for a 10x hashed/pooled run; subject_check must recognize this
-        from subject_id alone, the same way it recognizes NCBI's own pooled
-        text, rather than reporting a false 'differs'.
-        """
-        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
-                               'subject_id': 'donor 21; 22; 23 and 24',
-                               'species': 'human',
-                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
-
-        self.assertEqual(self.runVerify(), 0)
-
-        rows = self.readReport()
-        self.assertEqual(rows[0]['subject_check'], 'pooled')
-
-    def test_no_accession_leaves_subject_check_unresolved_only_when_null(self):
-        """
-        A row whose sample_name carries no accession, but does have a real
-        subject_id, is neither 'unresolved' (that's for a null subject_id)
-        nor comparable -- it is 'unverified'.
-        """
-        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
-                               'subject_id': 'Donor-2', 'species': 'human',
-                               'sample_name': 'not-an-accession'}])
-
-        empty_client = HttpClient(delay=0, backoff=0, session=FakeSession(
-            lambda *a: (_ for _ in ()).throw(AssertionError('no network call was expected'))))
-        args = getArgParser().parse_args(['oas', 'verify', str(self.samplesheet)])
-        with mock.patch('sourcerer.Cli.HttpClient', return_value=empty_client):
-            self.assertEqual(handleOasVerify(args), 0)
-
-        rows = self.readReport()
-        self.assertEqual(rows[0]['status'], 'no_accession')
-        self.assertEqual(rows[0]['subject_check'], 'unverified')
-        self.assertEqual(rows[0]['ncbi_sample_name'], '')
-
-    def test_resolved_row_gets_both_the_raw_name_and_a_suggested_subject(self):
-        """
-        A resolved row's report names its BioSample, a check link, NCBI's raw
-        sample name and the subject suggested from it -- no flag needed to
-        choose between them.
-        """
-        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
-                               'subject_id': 'no', 'species': 'human',
-                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
-
-        self.assertEqual(self.runVerify(), 0)
-
-        rows = self.readReport()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['status'], 'ok')
-        self.assertEqual(rows[0]['biosample_accession'], 'SAMN1')
-        self.assertEqual(rows[0]['ncbi_sample_name'], 'BL-110_VDJ')
-        self.assertEqual(rows[0]['ncbi_subject_suggested'], 'BL-110')
-        self.assertEqual(rows[0]['subject_check'], 'unresolved')
-        self.assertIn('SAMN1', rows[0]['biosample_url'])
-
-    def test_report_carries_every_input_column(self):
-        """
-        The report is a superset of the input, not a separate NCBI-only
-        file: airrflow-required columns absent from NCBI_EVIDENCE_COLUMNS
-        (filename, species, ...) must survive untouched, in their original
-        position, so the report can be used as airrflow --input directly.
-        """
-        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'fasta/x.fasta',
-                               'subject_id': 'no', 'species': 'human',
-                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
-
-        self.assertEqual(self.runVerify(), 0)
-
-        with open(self.samplesheet.with_name(
-                self.samplesheet.stem + '.ncbi_evidence' + self.samplesheet.suffix),
-                newline='') as handle:
-            reader = csv.DictReader(handle, delimiter='\t')
-            fields = reader.fieldnames
-            row = next(reader)
-
-        self.assertEqual(fields, list(VERIFY_COLUMNS) + list(NCBI_EVIDENCE_COLUMNS))
-        self.assertEqual(row['filename'], 'fasta/x.fasta')
-        self.assertEqual(row['species'], 'human')
-
-    def test_default_report_path_moves_the_extension_rather_than_appending_it(self):
-        """
-        The default path is <stem>.ncbi_evidence<ext>, not
-        <stem><ext>.ncbi_evidence.tsv -- one extension, not two.
-        """
-        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
-                               'subject_id': 'Donor-2', 'species': 'human',
-                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
-
-        self.assertEqual(self.runVerify(), 0)
-
-        self.assertTrue((self.tmp / 'samplesheet_airrflow_airr.ncbi_evidence.tsv').exists())
-        self.assertFalse(Path(str(self.samplesheet) + '.ncbi_evidence.tsv').exists())
-
-    def test_out_overrides_the_default_report_path(self):
-        """--out sends the report somewhere other than the default sidecar path."""
-        self.writeSamplesheet([{'sample_id': 'ssr_1', 'filename': 'x.tsv',
-                               'subject_id': 'no', 'species': 'human',
-                               'sample_name': 'Study/csv_paired/SRR1_1_Paired_All.csv.gz'}])
-        out = self.tmp / 'report.tsv'
-
-        self.assertEqual(self.runVerify(['--out', str(out)]), 0)
-
-        self.assertTrue(out.exists())
-        self.assertFalse(self.samplesheet.with_name(
-            self.samplesheet.stem + '.ncbi_evidence' + self.samplesheet.suffix).exists())
-        self.assertEqual(self.readReport(out)[0]['ncbi_sample_name'], 'BL-110_VDJ')
-
-    def test_missing_required_column_is_reported_by_name(self):
-        """A samplesheet missing a column verify needs names it in the error."""
-        with open(self.samplesheet, 'w', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=['sample_id', 'filename'],
-                                    delimiter='\t', lineterminator='\n')
-            writer.writeheader()
-            writer.writerow({'sample_id': 'ssr_1', 'filename': 'x.tsv'})
-        args = getArgParser().parse_args(['oas', 'verify', str(self.samplesheet)])
-
-        with self.assertRaises(Exception) as raised:
-            handleOasVerify(args)
-        self.assertIn('subject_id', str(raised.exception))
-        self.assertIn('sample_name', str(raised.exception))
-
-    def test_same_subject_id_in_two_studies_is_warned_about(self):
-        """
-        A short subject_id reused across studies is a real collision.
-
-        airrflow keys a subject on subject_id alone, so two studies sharing
-        'Donor-2' would otherwise merge silently; this is worth a log
-        warning independent of subject_check, which only compares each row
-        against NCBI and cannot see across rows.
-        """
-        columns = list(VERIFY_COLUMNS) + ['study']
-        with open(self.samplesheet, 'w', newline='') as handle:
-            writer = csv.DictWriter(handle, fieldnames=columns, delimiter='\t',
-                                    lineterminator='\n')
-            writer.writeheader()
-            writer.writerow({'sample_id': 'ssr_1', 'filename': 'a.tsv',
-                             'subject_id': 'Donor-2', 'species': 'human',
-                             'sample_name': 'StudyA/x.csv.gz', 'study': 'StudyA'})
-            writer.writerow({'sample_id': 'ssr_2', 'filename': 'b.tsv',
-                             'subject_id': 'Donor-2', 'species': 'human',
-                             'sample_name': 'StudyB/y.csv.gz', 'study': 'StudyB'})
-
-        with self.assertLogs('sourcerer', level='WARNING') as logs:
-            self.assertEqual(self.runVerify(), 0)
-
-        self.assertTrue(any('Donor-2' in message for message in logs.output))
-        self.assertTrue(any('StudyA' in message and 'StudyB' in message
-                            for message in logs.output))
 
 
 def makeReference(root, chain='IGHV', records=(('IGHV1-2*02', 'ACGT'),)):

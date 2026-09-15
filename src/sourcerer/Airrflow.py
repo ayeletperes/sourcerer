@@ -26,7 +26,6 @@ from pathlib import Path
 
 # Sourcerer imports
 from sourcerer.Exceptions import SourcererError
-from sourcerer.Sources.Oas import isNull
 
 log = logging.getLogger(__name__)
 
@@ -91,23 +90,6 @@ def targetLocus(loci):
         return 'TR'
 
     return ''
-
-
-def clean(value, default=''):
-    """
-    Normalize a metadata value, mapping the source's null sentinels to a default.
-
-    Arguments:
-      value: the raw value.
-      default (str): what to use when the value carries no information.
-
-    Returns:
-      str: the cleaned value.
-    """
-    if isNull(value):
-        return default
-
-    return str(value).strip()
 
 
 def loadSamplesheet(path):
@@ -207,29 +189,7 @@ def mergeSamplesheet(existing, fresh):
     return merged
 
 
-def countUnresolvedSubjects(entries):
-    """
-    Count data units whose Subject metadata is one of OAS's own null sentinels.
-
-    A unit like this writes that raw sentinel ('no', 'None', ...) into the
-    samplesheet's subject_id column rather than a real identifier -- see
-    buildSamplesheet's own comment on why the value is kept raw rather than
-    collapsed to a placeholder. `sourcerer oas verify` is what turns those
-    into real evidence from NCBI; this count is what a caller uses to decide
-    whether it is worth telling the user to run it.
-
-    Arguments:
-      entries (list): (DataUnit, Path) pairs, the same shape buildSamplesheet
-        takes; only the unit's metadata is read here.
-
-    Returns:
-      int: how many units carry no recorded subject.
-    """
-    return sum(1 for unit, _ in entries
-              if isNull((unit.metadata or {}).get('Subject')))
-
-
-def buildSamplesheet(entries, out, collection, root=None, loci=None):
+def buildSamplesheet(entries, out, source, root=None, loci=None):
     """
     Write an airrflow samplesheet describing converted data units.
 
@@ -241,7 +201,10 @@ def buildSamplesheet(entries, out, collection, root=None, loci=None):
     Arguments:
       entries (list): (DataUnit, Path) pairs naming the converted output.
       out (Path): where to write the samplesheet.
-      collection (str): the collection the units came from.
+      source (SourceBase): the source the units came from. Every column this
+        module cannot compute on its own -- subject, species, tissue, ... --
+        comes from source.samplesheetRow(unit); this function only knows the
+        column set, not how any one source's metadata fills it.
       root (Path): if given, filenames are written relative to it.
       loci (dict): unit_id to the loci observed in its converted output, used to
         derive pcr_target_locus.
@@ -255,7 +218,6 @@ def buildSamplesheet(entries, out, collection, root=None, loci=None):
 
     rows = []
     for unit, path in entries:
-        metadata = unit.metadata or {}
         filename = Path(path)
         if root is not None:
             try:
@@ -266,45 +228,14 @@ def buildSamplesheet(entries, out, collection, root=None, loci=None):
         # sample_id is left for the merge to assign, since it depends on what the
         # samplesheet already contains. The real identifier is preserved in
         # sample_name, which is what the merge keys on.
-        #
-        # Subject is passed through raw rather than via clean(): a value like OAS's
-        # own "no" carries real information (subject identity was not recorded) and
-        # must not be collapsed and then replaced by the study name, which would
-        # falsely tell airrflow that every otherwise-unidentified unit in the study
-        # is the same subject. The study is used only when OAS supplies no value
-        # for Subject at all.
-        raw_subject = metadata.get('Subject')
-        subject = (str(raw_subject).strip() if raw_subject not in (None, '') else '')
-        subject = subject or clean(metadata.get('study'))
-
-        rows.append({
+        row = {
             'sample_id': '',
             'filename': str(filename),
-            'subject_id': subject.replace(' ', '_'),
-            'species': clean(metadata.get('Species'), 'human').lower(),
             'pcr_target_locus': targetLocus(loci.get(unit.unit_id, [])),
-            'tissue': clean(metadata.get('BSource'), 'unknown'),
-            # Not derivable from OAS, but airrflow requires the column to be
-            # populated and asks for NA when it is unknown. NA is a placeholder
-            # here too, so a hand-edited value still survives a later merge.
-            'sex': 'NA',
-            'age': clean(metadata.get('Age'), 'NA'),
-            'biomaterial_provider': clean(metadata.get('Author'),
-                                          clean(metadata.get('study'))),
-            # Driven by the collection rather than hardcoded: only paired data is
-            # single cell, and the R implementation assumed TRUE because it only
-            # ever handled paired.
-            'single_cell': 'TRUE' if collection == 'paired' else 'FALSE',
-            'disease_diagnosis': clean(metadata.get('Disease')),
-            'intervention': clean(metadata.get('Vaccine')),
-            # Like Age, OAS records this as a presence flag ("no" when the
-            # study carries no longitudinal design), so the same null-token
-            # collapse to 'NA' applies, unlike Subject's raw pass-through.
-            'longitudinal': clean(metadata.get('Longitudinal'), 'NA'),
-            'cell_subset': clean(metadata.get('BType')),
-            'study': clean(metadata.get('study')) or unit.study,
             'sample_name': unit.unit_id,
-        })
+        }
+        row.update(source.samplesheetRow(unit))
+        rows.append(row)
 
     existing = loadSamplesheet(out)
     merged = mergeSamplesheet(existing, rows)

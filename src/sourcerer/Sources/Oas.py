@@ -24,6 +24,7 @@ import gzip
 import hashlib
 import json
 import logging
+import os
 import re
 from datetime import UTC
 from pathlib import Path
@@ -34,8 +35,10 @@ from bs4 import BeautifulSoup
 
 # Sourcerer imports
 from sourcerer.Catalog import DETAIL_OK, filterCatalog, loadCatalog, needsDetail
+from sourcerer.Commandline import CommonHelpFormatter
 from sourcerer.Convert import coerceAirrTypes
-from sourcerer.Exceptions import OasParseError
+from sourcerer.Exceptions import OasParseError, SourcererError
+from sourcerer.Http import HttpClient
 from sourcerer.Sources.Base import DataUnit, SourceBase
 
 log = logging.getLogger(__name__)
@@ -120,6 +123,23 @@ def isNull(value):
         return True
 
     return str(value).strip() in NULL_TOKENS
+
+
+def clean(value, default=''):
+    """
+    Normalize an OAS metadata value, mapping its null sentinels to a default.
+
+    Arguments:
+      value: the raw value.
+      default (str): what to use when the value carries no information.
+
+    Returns:
+      str: the cleaned value.
+    """
+    if isNull(value):
+        return default
+
+    return str(value).strip()
 
 
 def unescapeOption(text):
@@ -1263,6 +1283,390 @@ def _finishChunk(frame, metadata, unit_id, collection, report):
 
 
 # ---------------------------------------------------------------------------
+# The airrflow samplesheet row
+# ---------------------------------------------------------------------------
+
+def countUnresolvedSubjects(entries):
+    """
+    Count data units whose Subject metadata is one of OAS's own null sentinels.
+
+    A unit like this writes that raw sentinel ('no', 'None', ...) into the
+    samplesheet's subject_id column rather than a real identifier -- see
+    samplesheetRow's own comment on why the value is kept raw rather than
+    collapsed to a placeholder. `sourcerer oas verify` is what turns those
+    into real evidence from NCBI; this count is what a caller uses to decide
+    whether it is worth telling the user to run it.
+
+    Arguments:
+      entries (list): (DataUnit, Path) pairs, the same shape
+        Airrflow.buildSamplesheet takes; only the unit's metadata is read
+        here.
+
+    Returns:
+      int: how many units carry no recorded subject.
+    """
+    return sum(1 for unit, _ in entries
+              if isNull((unit.metadata or {}).get('Subject')))
+
+
+def samplesheetRow(unit):
+    """
+    Map an OAS data unit's metadata to airrflow samplesheet columns.
+
+    Arguments:
+      unit (DataUnit): the converted unit.
+
+    Returns:
+      dict: the samplesheet columns OAS metadata can fill in.
+    """
+    metadata = unit.metadata or {}
+
+    # Subject is passed through raw rather than via clean(): a value like OAS's
+    # own "no" carries real information (subject identity was not recorded) and
+    # must not be collapsed and then replaced by the study name, which would
+    # falsely tell airrflow that every otherwise-unidentified unit in the study
+    # is the same subject. The study is used only when OAS supplies no value
+    # for Subject at all.
+    raw_subject = metadata.get('Subject')
+    subject = (str(raw_subject).strip() if raw_subject not in (None, '') else '')
+    subject = subject or clean(metadata.get('study'))
+
+    return {
+        'subject_id': subject.replace(' ', '_'),
+        'species': clean(metadata.get('Species'), 'human').lower(),
+        'tissue': clean(metadata.get('BSource'), 'unknown'),
+        # Not derivable from OAS, but airrflow requires the column to be
+        # populated and asks for NA when it is unknown. NA is a placeholder
+        # here too, so a hand-edited value still survives a later merge.
+        'sex': 'NA',
+        'age': clean(metadata.get('Age'), 'NA'),
+        'biomaterial_provider': clean(metadata.get('Author'),
+                                      clean(metadata.get('study'))),
+        # Driven by the collection rather than hardcoded: only paired data is
+        # single cell, and the R implementation assumed TRUE because it only
+        # ever handled paired.
+        'single_cell': 'TRUE' if unit.collection == 'paired' else 'FALSE',
+        'disease_diagnosis': clean(metadata.get('Disease')),
+        'intervention': clean(metadata.get('Vaccine')),
+        # Like Age, OAS records this as a presence flag ("no" when the
+        # study carries no longitudinal design), so the same null-token
+        # collapse to 'NA' applies, unlike Subject's raw pass-through.
+        'longitudinal': clean(metadata.get('Longitudinal'), 'NA'),
+        'cell_subset': clean(metadata.get('BType')),
+        'study': clean(metadata.get('study')) or unit.study,
+    }
+
+
+# ---------------------------------------------------------------------------
+# oas verify: cross-referencing unresolved subjects against NCBI
+# ---------------------------------------------------------------------------
+
+#: The columns `sourcerer oas verify` adds, appended after whatever columns
+#: the input samplesheet already had (never inserted among them) -- so the
+#: report is the input samplesheet plus evidence, and can be used in its
+#: place as airrflow input, rather than a separate file missing the columns
+#: airrflow actually reads (`filename`, `species`, `pcr_target_locus`, ...).
+NCBI_EVIDENCE_COLUMNS = ('ncbi_sample_name', 'ncbi_subject_suggested', 'status',
+                         'subject_check', 'accession', 'biosample_accession',
+                         'biosample_url', 'pooled_codes')
+
+
+def _addVerifyAction(actions):
+    """
+    Add oas verify: cross-reference a samplesheet's unresolved subjects
+    against NCBI.
+
+    Not a search/download action: it takes no COLLECTION or filter flags,
+    since it reads a samplesheet already on disk rather than querying OAS.
+    Every row with subject_id 'no' or 'None' (OAS's own null sentinels; see
+    isNull above) names an SRA run or GEO sample accession in its
+    sample_name column, and that accession's NCBI BioSample record usually
+    names the sample plainly enough for a human to read off the subject.
+
+    Deliberately two flags, not the larger surface an earlier version of this
+    command had (--apply, --use-suggestion, --evidence-out, --limit): the
+    report is the one thing this command produces, always with both NCBI's raw
+    sample name and a suggested subject, so there was nothing left for a flag
+    to switch between. It carries every column the input samplesheet had, evidence
+    columns appended, so it is a drop-in airrflow input rather than a
+    side file -- see buildEvidenceRow and NCBI_EVIDENCE_COLUMNS.
+
+    Arguments:
+      actions: the oas subcommand's action subparsers (search and download
+        are already on it).
+    """
+    verify = actions.add_parser(
+        'verify', help='cross-reference unresolved subjects against NCBI',
+        description='Write an evidence report with one row per samplesheet '
+                    'row, every input column carried through unchanged. '
+                    'Every row whose sample_name yields a run/sample '
+                    'accession (SRR/ERR/DRR/GSM) is looked up against NCBI, '
+                    'whether or not OAS itself recorded a subject_id -- an '
+                    'OAS-recorded subject can still be wrong (a typo, a '
+                    'short code reused across studies, or a pooled/hashed '
+                    'run naming several donors under one value), and '
+                    'NCBI\'s own record is independent evidence either way. '
+                    'ncbi_sample_name carries NCBI\'s raw sample name -- never '
+                    'guessed at further, since some studies\' names need '
+                    'study-specific reading to turn into a subject id (see '
+                    'the module docstring in Ncbi.py); ncbi_subject_suggested '
+                    'carries the same value with the handful of generic '
+                    'patterns (a trailing locus or visit suffix) stripped, '
+                    'the ones safe to normalize regardless of study. '
+                    'subject_check reports how that compares to the '
+                    'samplesheet\'s own subject_id: \'unresolved\' when OAS '
+                    'recorded none, \'pooled\' when either side names more '
+                    'than one donor, \'agrees\' or \'differs\' otherwise, or '
+                    '\'unverified\' when NCBI itself could not resolve the '
+                    'accession. A pooled/multi-donor run gets an '
+                    'AMBIGUOUS_POOLED marker naming the donor codes in both '
+                    'NCBI columns instead of a guessed single '
+                    'subject. Because every input column survives, the '
+                    'report can be pointed at directly as airrflow --input '
+                    'once subject_id is filled in or corrected for any row '
+                    'that needs it.',
+        formatter_class=CommonHelpFormatter)
+    verify.add_argument('samplesheet', type=Path,
+                        help='an airrflow samplesheet to read; only needs '
+                             'sample_id, sample_name and subject_id columns, '
+                             'so a hand-edited sheet is fine too, but every '
+                             'column it has is carried through to the report'
+                             )
+    verify.add_argument('--out', type=Path, default=None,
+                        help='where to write the evidence report; defaults '
+                             'to <samplesheet-name>.ncbi_evidence<ext>, e.g. '
+                             'samplesheet_airrflow_fasta.ncbi_evidence.tsv '
+                             'for samplesheet_airrflow_fasta.tsv')
+    verify.add_argument('--ncbi-api-key', default=None,
+                        help='an NCBI API key, raising the polite request '
+                             'rate from 3/s to 10/s; prefer setting the '
+                             'NCBI_API_KEY environment variable instead, '
+                             'since a key given here ends up in shell history')
+
+
+def readSamplesheetRows(path):
+    """
+    Read a samplesheet leniently, for verify rather than for the download merge.
+
+    Unlike Airrflow.loadSamplesheet, this accepts any TSV that carries the
+    columns verify actually needs, in any order, alongside whatever else a
+    hand-edited sheet has picked up. Every column present is kept, not just
+    the three verify reads, so the row it came from can be written back out
+    whole.
+
+    Arguments:
+      path (Path): the samplesheet to read.
+
+    Returns:
+      tuple: (fields (list of str), rows (list of dict)), in file order.
+
+    Raises:
+      SourcererError: if a required column is missing.
+    """
+    with open(path, newline='') as handle:
+        reader = csv.DictReader(handle, delimiter='\t')
+        fields = reader.fieldnames or []
+        missing = {'sample_id', 'sample_name', 'subject_id'} - set(fields)
+        if missing:
+            raise SourcererError(
+                '%s is missing column(s) %s that oas verify needs'
+                % (path, ', '.join(sorted(missing))))
+        return list(fields), [dict(row) for row in reader]
+
+
+def normalizeForCompare(text):
+    """
+    Reduce text to bare alphanumerics for a formatting-insensitive comparison.
+
+    Arguments:
+      text (str): the text to normalize.
+
+    Returns:
+      str: lowercased, with everything but letters and digits stripped.
+    """
+    return ''.join(c for c in str(text or '').lower() if c.isalnum())
+
+
+def subjectCheck(subject_id, found):
+    """
+    Compare a samplesheet's own subject_id against NCBI's evidence for it.
+
+    Run unconditionally, even when subject_id already looks real: OAS's own
+    value can still be wrong -- a typo, a short code reused across studies
+    (see buildEvidenceRow's caller), or a pooled/hashed run that names
+    several donors under one value (Ncbi.poolCodes is applied to subject_id
+    itself here, not only to NCBI's text, because OAS's own Subject field
+    uses the same semicolon-separated donor lists).
+
+    Arguments:
+      subject_id (str): the samplesheet row's own subject_id.
+      found (Ncbi.Evidence): the NCBI lookup for this row's accession, or
+        None if no accession could be read from sample_name.
+
+    Returns:
+      str: 'unresolved' if OAS recorded no subject at all, 'pooled' if
+        either side names more than one donor, 'unverified' if NCBI could
+        not resolve the accession (so there is nothing to compare against),
+        otherwise 'agrees' or 'differs'.
+    """
+    if isNull(subject_id):
+        return 'unresolved'
+
+    from sourcerer.Ncbi import poolCodes
+    if poolCodes(subject_id) or (found is not None and found.status == 'pooled'):
+        return 'pooled'
+
+    if found is None or found.status != 'ok':
+        return 'unverified'
+
+    ncbi_text = normalizeForCompare(found.sample_name)
+    oas_text = normalizeForCompare(subject_id)
+    if oas_text and ncbi_text and (oas_text in ncbi_text or ncbi_text in oas_text):
+        return 'agrees'
+
+    return 'differs'
+
+
+def buildEvidenceRow(row, found):
+    """
+    Build one row of the verify evidence report.
+
+    Every column already on `row` passes through verbatim -- this only adds
+    NCBI_EVIDENCE_COLUMNS, it never edits or drops what was already on the
+    samplesheet. ncbi_sample_name and ncbi_subject_suggested always come from
+    NCBI, never from the samplesheet's own subject_id: a real-looking
+    subject_id is not proof it is correct, which is exactly what
+    subject_check is for. A pooled/multi-donor run gets an AMBIGUOUS_POOLED
+    marker in both columns, since there is no single subject to suggest.
+    Anything else takes ncbi_sample_name from NCBI's raw sample name and
+    ncbi_subject_suggested from the generic-heuristic strip of it (see
+    Ncbi.suggestSubject) -- both always written, so joining this report back
+    onto a samplesheet never needs a flag to decide which one it gets.
+
+    Arguments:
+      row (dict): the samplesheet row.
+      found (Ncbi.Evidence): the NCBI lookup for this row's accession, or
+        None if no accession could be read from sample_name.
+
+    Returns:
+      dict: row, plus NCBI_EVIDENCE_COLUMNS.
+    """
+    subject_id = row.get('subject_id', '')
+
+    if found is None:
+        evidence = {'ncbi_sample_name': '', 'ncbi_subject_suggested': '',
+                   'status': 'no_accession', 'accession': '', 'biosample_accession': '',
+                   'biosample_url': '', 'pooled_codes': ''}
+    else:
+        pooled_codes = ';'.join(found.pooled_codes)
+        if found.status == 'pooled':
+            ncbi_sample_name = ncbi_subject_suggested = 'AMBIGUOUS_POOLED:%s' % pooled_codes
+        elif found.status == 'ok':
+            ncbi_sample_name = found.sample_name
+            ncbi_subject_suggested = found.suggested_subject
+        else:
+            ncbi_sample_name = ncbi_subject_suggested = ''
+        evidence = {'ncbi_sample_name': ncbi_sample_name,
+                   'ncbi_subject_suggested': ncbi_subject_suggested,
+                   'status': found.status, 'accession': found.accession,
+                   'biosample_accession': found.biosample_accession,
+                   'biosample_url': found.url, 'pooled_codes': pooled_codes}
+
+    evidence['subject_check'] = subjectCheck(subject_id, found)
+
+    return {**row, **evidence}
+
+
+def warnReusedSubjects(rows):
+    """
+    Log a warning when the same subject_id is used by more than one study.
+
+    airrflow keys a subject on subject_id alone, so two different studies
+    reusing the same short code (e.g. 'Donor-2') silently merges two
+    unrelated people into one subject downstream. This is exactly the kind
+    of collision a row-by-row read of subject_check is unlikely to catch,
+    since each individual row looks unremarkable on its own.
+
+    Arguments:
+      rows (list): samplesheet rows; only those carrying both subject_id and
+        study are considered.
+    """
+    studies_by_subject = {}
+    for row in rows:
+        subject = row.get('subject_id', '')
+        study = row.get('study', '')
+        if isNull(subject) or not study:
+            continue
+        studies_by_subject.setdefault(subject, set()).add(study)
+
+    for subject, studies in sorted(studies_by_subject.items()):
+        if len(studies) > 1:
+            log.warning("subject_id '%s' is used by %d different studies: %s",
+                       subject, len(studies), ', '.join(sorted(studies)))
+
+
+def handleOasVerify(args):
+    """Cross-reference every samplesheet row's subject against NCBI."""
+    from sourcerer.Ncbi import (
+        DEFAULT_DELAY,
+        KEYED_DELAY,
+        accessionFromText,
+        gatherEvidence,
+    )
+
+    fields, rows = readSamplesheetRows(args.samplesheet)
+    warnReusedSubjects(rows)
+
+    # Every row with a readable accession is looked up, not only rows OAS
+    # left unresolved: a subject_id OAS did record is still worth checking
+    # against NCBI's own record (see subjectCheck), so there is no 'pending'
+    # subset here to restrict the lookup to.
+    accession_by_sample = {}
+    for row in rows:
+        accession = accessionFromText(row.get('sample_name', ''))
+        if accession is not None:
+            accession_by_sample[row['sample_id']] = accession
+
+    accessions = set(accession_by_sample.values())
+    api_key = args.ncbi_api_key or os.environ.get('NCBI_API_KEY')
+    delay = KEYED_DELAY if api_key else DEFAULT_DELAY
+    client = HttpClient(delay=delay)
+    evidence = (gatherEvidence(client, accessions, api_key=api_key)
+               if accessions else {})
+
+    counts = {}
+    evidence_rows = []
+    for row in rows:
+        accession = accession_by_sample.get(row['sample_id'])
+        found = evidence.get(accession) if accession is not None else None
+        evidence_row = buildEvidenceRow(row, found)
+        counts[evidence_row['status']] = counts.get(evidence_row['status'], 0) + 1
+        evidence_rows.append(evidence_row)
+
+    # Input columns first, in their own order, then whichever evidence columns
+    # were not already among them -- so a samplesheet round-tripped through
+    # verify keeps every field it walked in with.
+    out_fields = fields + [c for c in NCBI_EVIDENCE_COLUMNS if c not in fields]
+    # <name>.ncbi_evidence<ext>, not <name><ext>.ncbi_evidence.tsv: the input's
+    # own extension moves after 'ncbi_evidence' rather than getting a second
+    # one appended after it.
+    out = args.out or args.samplesheet.with_name(
+        args.samplesheet.stem + '.ncbi_evidence' + args.samplesheet.suffix)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, 'w', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=out_fields,
+                                delimiter='\t', lineterminator='\n')
+        writer.writeheader()
+        writer.writerows(evidence_rows)
+
+    log.info('%d rows: %s', len(rows),
+             ', '.join('%d %s' % (n, status) for status, n in sorted(counts.items())))
+    log.info('wrote %s', out)
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # The source
 # ---------------------------------------------------------------------------
 
@@ -1302,6 +1706,33 @@ class OasSource(SourceBase):
     #: Fingerprint of the raw unpaired catalog, set as a side effect of
     #: harvesting it, so that a refresh fingerprints the same bytes it indexed.
     catalog_fingerprint = None
+
+    catalog_columns = ('unit_id', 'collection', 'url', 'dir_segment', 'study',
+                       'run', 'n_unique_sequences', 'Species', 'Isotype',
+                       'Chain', 'Disease', 'Vaccine', 'Subject', 'Age',
+                       'Longitudinal', 'BSource', 'BType', 'Author',
+                       'detail_status', 'detail_attempted')
+    search_columns = ('Species', 'Disease', 'Subject', 'BSource')
+    enrichment_columns = ('BSource', 'BType', 'Author')
+
+    def newReport(self):
+        """See SourceBase.newReport."""
+        return newReport()
+
+    def samplesheetRow(self, unit):
+        """See SourceBase.samplesheetRow."""
+        return samplesheetRow(unit)
+
+    def countUnresolvedSubjects(self, entries):
+        """See SourceBase.countUnresolvedSubjects."""
+        return countUnresolvedSubjects(entries)
+
+    @classmethod
+    def addActions(cls, actions):
+        """Add oas verify. See SourceBase.addActions."""
+        _addVerifyAction(actions)
+
+        return {'verify': handleOasVerify}
 
     def formUrl(self, collection):
         """
@@ -1490,7 +1921,7 @@ class OasSource(SourceBase):
                 row['detail_status'] = 'failed'
                 continue
 
-            for name in ('BSource', 'BType', 'Author'):
+            for name in self.enrichment_columns:
                 if found.get(name):
                     row[name] = found[name]
             row['detail_status'] = DETAIL_OK

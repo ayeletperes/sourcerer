@@ -475,7 +475,7 @@ def _addOasVerifyAction(actions):
                     '\'unverified\' when NCBI itself could not resolve the '
                     'accession. A pooled/multi-donor run gets an '
                     'AMBIGUOUS_POOLED marker naming the donor codes in both '
-                    'ncbi_ columns instead of a guessed single '
+                    'NCBI columns instead of a guessed single '
                     'subject. Because every input column survives, the '
                     'report can be pointed at directly as airrflow --input '
                     'once subject_id is filled in or corrected for any row '

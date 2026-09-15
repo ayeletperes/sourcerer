@@ -6,8 +6,8 @@ Unit tests for the commandline interface
 __author__ = 'Susanna Marquez'
 
 # Imports
-import csv
 import contextlib
+import csv
 import io
 import shutil
 import tempfile
@@ -15,6 +15,7 @@ import unittest
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from pathlib import Path
 from unittest import mock
+
 import pandas
 
 # Sourcerer imports
@@ -32,12 +33,12 @@ from sourcerer.Cli import (
     loadMap,
 )
 from sourcerer.Exceptions import SourcererError
+from sourcerer.Http import HttpClient
 from sourcerer.Sources.Base import DataUnit, DownloadResult, Query, SourceBase
 from sourcerer.Sources.Imgt import ImgtSource
 from sourcerer.Sources.Oas import OasSource, newReport
-from tests.FakeHttp import FakeResponse, FakeSession
 from sourcerer.Sources.Ogrdb import OgrdbSource
-from sourcerer.Http import HttpClient
+from tests.FakeHttp import FakeResponse, FakeSession
 
 
 class TestArgParser(unittest.TestCase):

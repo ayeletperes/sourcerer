@@ -135,6 +135,58 @@ def mergeUnits(existing, fresh):
     return merged
 
 
+def mergeConversionReport(total, report):
+    """
+    Fold one unit's conversion report into a run level total.
+
+    A download run converts one unit at a time, and each conversion produces
+    its own counters (rows in/out, rows missing a v_call, an unresolved
+    locus, and so on -- see Sources.Oas.newReport). Without this, those
+    counts were computed and then simply discarded once the next unit
+    started, leaving nothing anywhere recording whether the run as a whole
+    silently dropped or mismapped rows.
+
+    Nothing here names a specific counter: an int (or float) is summed, a set
+    (OAS's `loci`, the locus values actually observed) is unioned, so this
+    generalizes to whatever shape a source's own report happens to have
+    rather than being tied to OAS's counters by name.
+
+    Arguments:
+      total (dict): the running total, modified in place.
+      report (dict): one unit's conversion report.
+
+    Returns:
+      dict: total, for chaining.
+    """
+    for key, value in report.items():
+        if isinstance(value, set):
+            total[key] = total.get(key, set()) | value
+        elif isinstance(value, (int, float)):
+            total[key] = total.get(key, 0) + value
+        else:
+            total[key] = value
+
+    return total
+
+
+def serializeConversionReport(report):
+    """
+    Make a conversion report safe to write as YAML.
+
+    A set (OAS's `loci`) is not something yaml.safe_dump can serialize, so it
+    becomes a sorted list; everything else passes through unchanged.
+
+    Arguments:
+      report (dict): a conversion report, as accumulated by
+        mergeConversionReport.
+
+    Returns:
+      dict: the same counters, YAML safe.
+    """
+    return {key: (sorted(value) if isinstance(value, set) else value)
+           for key, value in report.items()}
+
+
 def buildUnitRecord(unit, result, root, outputs=None):
     """
     Describe one downloaded unit.
@@ -176,7 +228,8 @@ def commandLine():
 
 
 def writeDownloadMetadata(out, source, collection, filters, limit, formats,
-                          units, schema=None, license=None, citation=None):
+                          units, schema=None, license=None, citation=None,
+                          conversion_report=None):
     """
     Write or update the provenance record for a download directory.
 
@@ -196,6 +249,11 @@ def writeDownloadMetadata(out, source, collection, filters, limit, formats,
         knows the terms the data was obtained under.
       citation (tuple): the source's requested citation(s), if known, for the
         same reason.
+      conversion_report (dict): counters accumulated across every unit
+        converted this run (see mergeConversionReport), or None/empty when
+        nothing was converted (a raw-only run). A conversion that silently
+        dropped or mismapped rows would otherwise leave no trace anywhere on
+        disk.
 
     Returns:
       Path: the file written.
@@ -220,6 +278,14 @@ def writeDownloadMetadata(out, source, collection, filters, limit, formats,
     if schema is not None:
         run['schema_harvested'] = schema.harvested
         run['schema_harvested_by'] = schema.harvested_by
+        # Ties this run to the exact snapshot content it was resolved
+        # against; the two fields above alone only narrow down which one.
+        from sourcerer.Schema import fingerprint as schemaFingerprint
+        digest = schemaFingerprint(source)
+        if digest is not None:
+            run['schema_fingerprint'] = digest
+    if conversion_report:
+        run['conversion_report'] = serializeConversionReport(conversion_report)
 
     # Rebuilt in a fixed order rather than updated in place, so the header keys
     # stay at the top of the file however the loaded record was ordered.

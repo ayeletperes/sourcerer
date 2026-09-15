@@ -17,6 +17,7 @@ from sourcerer.Schema import (
     Collection,
     Field,
     SourceSchema,
+    fingerprint,
     fromDict,
     loadSchema,
     saveSchema,
@@ -201,6 +202,77 @@ class TestQuietWrite(unittest.TestCase):
             _, changed = saveSchema(changed_schema, path)
 
             self.assertTrue(changed)
+
+
+class TestFingerprint(unittest.TestCase):
+    """
+    Tests for hashing a snapshot into one string identifying its content
+
+    This is what a download's provenance record uses to tie itself to the
+    exact snapshot it was resolved against, since harvested/harvested_by
+    (a date and a tool version) only narrow that down.
+    """
+
+    def test_the_same_snapshot_hashes_the_same_way_twice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            saveSchema(makeSchema(), path)
+
+            self.assertEqual(fingerprint('demo', path=path),
+                             fingerprint('demo', path=path))
+
+    def test_a_content_change_changes_the_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            saveSchema(makeSchema(), path)
+            before = fingerprint('demo', path=path)
+
+            changed_schema = makeSchema()
+            changed_schema.collections['paired'] = Collection(
+                name='paired', fields=(Field(name='Species',
+                                             values=('human', 'newt')),))
+            saveSchema(changed_schema, path)
+
+            self.assertNotEqual(fingerprint('demo', path=path), before)
+
+    def test_a_quiet_refresh_leaves_the_fingerprint_unchanged(self):
+        """
+        saveSchema leaves schema.yaml untouched, timestamp included, when a
+        fresh harvest's content is otherwise identical (see TestQuietWrite);
+        the fingerprint, hashing whatever bytes are actually on disk, is
+        therefore unchanged too. If that ever stopped being true, a download
+        made on a quiet month would record a schema_fingerprint that looked
+        like drift when none occurred.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            saveSchema(makeSchema(), path)
+            before = fingerprint('demo', path=path)
+
+            saveSchema(makeSchema(harvested='2026-09-01T00:00:00Z'), path)
+
+            self.assertEqual(fingerprint('demo', path=path), before)
+
+    def test_no_schema_yaml_is_none_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(fingerprint('demo', path=Path(tmp)))
+
+    def test_the_packaged_oas_snapshot_hashes_and_is_stable(self):
+        """
+        OAS is the one source with a catalog fingerprint file, so this also
+        covers the fold-in-the-catalog-sha256 path against real data.
+        """
+        digest = fingerprint('oas')
+
+        self.assertIsNotNone(digest)
+        self.assertEqual(fingerprint('oas'), digest)
+
+    def test_a_source_with_no_catalog_fingerprint_still_hashes(self):
+        """IMGT has a schema.yaml but no catalog_fingerprint.json."""
+        self.assertIsNotNone(fingerprint('imgt'))
+
+    def test_an_unknown_source_is_none_not_an_error(self):
+        self.assertIsNone(fingerprint('does-not-exist'))
 
 
 class TestPackagedSnapshot(unittest.TestCase):

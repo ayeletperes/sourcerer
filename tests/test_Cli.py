@@ -17,9 +17,10 @@ from pathlib import Path
 from unittest import mock
 
 import pandas
+import yaml
 
 # Sourcerer imports
-from sourcerer import Reference
+from sourcerer import Provenance, Reference, Schema
 from sourcerer.Cli import (
     NCBI_EVIDENCE_COLUMNS,
     applyPins,
@@ -378,6 +379,122 @@ class TestHandleDownload(unittest.TestCase):
         fasta = next(self.outdir.glob('fasta/*.fasta')).read_text().splitlines()
         self.assertEqual(len(airr), 3)
         self.assertEqual(len(fasta), 4)
+
+
+class TwoUnitStubSource(SourceBase):
+    """
+    A source serving two units with distinct conversion reports.
+
+    StubSource above always serves exactly one unit with a fixed report, which
+    cannot tell "recorded once" from "summed across the whole run" apart. This
+    exercises that: each unit's convertUnit returns different counters, so a
+    correct run total has to actually add them rather than just reflect
+    whichever unit happened to run last.
+    """
+
+    name = 'oas'
+    description = 'stub'
+    collections = ('paired',)
+
+    units = (
+        DataUnit(unit_id='Study_2020/csv/one.csv.gz', collection='paired',
+                url='https://example.invalid/one.csv.gz',
+                metadata={'Species': 'human', 'Subject': 'Donor-1'},
+                n_sequences=2),
+        DataUnit(unit_id='Study_2020/csv/two.csv.gz', collection='paired',
+                url='https://example.invalid/two.csv.gz',
+                metadata={'Species': 'human', 'Subject': 'Donor-2'},
+                n_sequences=3),
+    )
+
+    def harvestSchema(self):
+        raise NotImplementedError
+
+    def searchUnits(self, query):
+        return list(self.units)
+
+    def readUnit(self, path, unit):
+        raise NotImplementedError
+
+    def normalizeChunk(self, metadata, chunk, unit, offset, report):
+        raise NotImplementedError
+
+    def validateQuery(self, collection, filters):
+        return Query(collection=collection, filters=filters)
+
+    def fetchUnit(self, unit, outdir, resume=True):
+        path = Path(outdir) / unit.unit_id
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'raw')
+
+        return DownloadResult(unit=unit, path=path, sha256='0' * 64, size_bytes=3)
+
+    def convertUnit(self, path, unit, chunksize=50000):
+        frame = pandas.DataFrame(
+            {'sequence_id': ['a'], 'cell_id': ['c1'], 'sequence': ['ACGT'],
+             'locus': ['IGH'], 'c_call': ['IGHM']})
+        report = newReport()
+        if unit.unit_id.endswith('one.csv.gz'):
+            report.update(rows_in=2, rows_out=2, missing_c_call=1, loci={'IGH'})
+        else:
+            report.update(rows_in=3, rows_out=3, missing_c_call=2, loci={'IGK'})
+
+        return {'Species': 'human'}, iter([frame]), report
+
+
+class TestConversionReportProvenance(unittest.TestCase):
+    """
+    Tests for the run level conversion_report and schema_fingerprint that
+    handleDownload writes into download_metadata.yml
+    """
+
+    def setUp(self):
+        self.outdir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.outdir, ignore_errors=True)
+
+    def runDownload(self, *formats):
+        argv = ['oas', 'download', 'paired', '--outdir', str(self.outdir)]
+        for value in formats:
+            argv += ['--format', value]
+
+        args = getArgParser().parse_args(argv)
+        args.source = 'oas'
+
+        with mock.patch('sourcerer.Cli.getSource', return_value=TwoUnitStubSource(None)):
+            return handleDownload(args)
+
+    def lastRun(self):
+        text = (self.outdir / Provenance.DOWNLOAD_METADATA).read_text()
+        return yaml.safe_load(text)['runs'][-1]
+
+    def test_conversion_counters_sum_across_every_unit_in_the_run(self):
+        """
+        A run converting two units must report the run as a whole, not
+        whichever unit's counters happened to be computed last.
+        """
+        self.assertEqual(self.runDownload('airr'), 0)
+
+        report = self.lastRun()['conversion_report']
+        self.assertEqual(report['rows_in'], 5)
+        self.assertEqual(report['rows_out'], 5)
+        self.assertEqual(report['missing_c_call'], 3)
+        self.assertEqual(sorted(report['loci']), ['IGH', 'IGK'])
+
+    def test_a_raw_only_run_records_no_conversion_report(self):
+        """Nothing was converted, so there is nothing to report."""
+        self.assertEqual(self.runDownload('raw'), 0)
+
+        self.assertNotIn('conversion_report', self.lastRun())
+
+    def test_the_run_records_a_schema_fingerprint(self):
+        """
+        Ties the download to the exact snapshot content it was resolved
+        against, not only a harvest date and tool version.
+        """
+        self.assertEqual(self.runDownload('airr'), 0)
+
+        self.assertEqual(self.lastRun()['schema_fingerprint'],
+                         Schema.fingerprint('oas'))
 
 
 #: A samplesheet header narrow enough for verify's own tests: it only reads

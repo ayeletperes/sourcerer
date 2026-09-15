@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 # Sourcerer imports
-from sourcerer import Provenance
+from sourcerer import Provenance, Schema
 from sourcerer.Exceptions import SourcererError
 from sourcerer.Sources.Base import DataUnit, DownloadResult
 
@@ -66,6 +66,51 @@ class TestUnitRecord(unittest.TestCase):
         self.assertEqual(record['n_sequences'], 7)
 
 
+class TestMergeConversionReport(unittest.TestCase):
+    """
+    Tests for folding one unit's conversion counters into a run level total
+    """
+
+    def test_int_counters_sum_across_units(self):
+        total = Provenance.mergeConversionReport({}, {'rows_in': 2, 'rows_out': 2})
+        Provenance.mergeConversionReport(total, {'rows_in': 3, 'rows_out': 3})
+
+        self.assertEqual(total, {'rows_in': 5, 'rows_out': 5})
+
+    def test_a_set_counter_is_unioned_not_summed(self):
+        """
+        OAS's `loci` names which locus values were actually observed; summing
+        it would be meaningless, and losing one unit's loci on the next
+        merge would misreport what the run actually converted.
+        """
+        total = Provenance.mergeConversionReport({}, {'loci': {'IGH'}})
+        Provenance.mergeConversionReport(total, {'loci': {'IGH', 'IGK'}})
+
+        self.assertEqual(total['loci'], {'IGH', 'IGK'})
+
+    def test_an_empty_report_leaves_the_total_unchanged(self):
+        total = Provenance.mergeConversionReport({'rows_in': 5}, {})
+
+        self.assertEqual(total, {'rows_in': 5})
+
+
+class TestSerializeConversionReport(unittest.TestCase):
+    """
+    Tests for making a conversion report safe to write as YAML
+    """
+
+    def test_a_set_becomes_a_sorted_list(self):
+        """yaml.safe_dump cannot serialize a set; a sorted list is deterministic."""
+        payload = Provenance.serializeConversionReport({'loci': {'IGK', 'IGH'}})
+
+        self.assertEqual(payload['loci'], ['IGH', 'IGK'])
+
+    def test_other_values_pass_through_unchanged(self):
+        payload = Provenance.serializeConversionReport({'rows_in': 5})
+
+        self.assertEqual(payload['rows_in'], 5)
+
+
 class TestMerge(unittest.TestCase):
     """
     Tests for accumulating across several downloads
@@ -76,9 +121,11 @@ class TestMerge(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.out = Path(self.tmp.name)
 
-    def write(self, units, formats, filters=None):
+    def write(self, units, formats, filters=None, schema=None,
+             conversion_report=None):
         return Provenance.writeDownloadMetadata(
-            self.out, 'oas', 'paired', filters or {}, None, formats, units)
+            self.out, 'oas', 'paired', filters or {}, None, formats, units,
+            schema=schema, conversion_report=conversion_report)
 
     def read(self):
         return yaml.safe_load((self.out / Provenance.DOWNLOAD_METADATA).read_text())
@@ -168,6 +215,45 @@ class TestMerge(unittest.TestCase):
                        ['raw'])
 
         self.assertIn('by hand', path.read_text())
+
+    def test_conversion_report_is_recorded_when_given(self):
+        unit, result = makeUnit()
+        self.write([Provenance.buildUnitRecord(unit, result, self.out)],
+                  ['airr'], conversion_report={'rows_in': 5, 'loci': {'IGH', 'IGK'}})
+
+        run = self.read()['runs'][-1]
+        self.assertEqual(run['conversion_report']['rows_in'], 5)
+        self.assertEqual(sorted(run['conversion_report']['loci']), ['IGH', 'IGK'])
+
+    def test_no_conversion_report_key_when_nothing_was_converted(self):
+        """
+        A raw-only run converts nothing, so there is nothing to report; an
+        empty block would be noise, not information.
+        """
+        unit, result = makeUnit()
+        self.write([Provenance.buildUnitRecord(unit, result, self.out)], ['raw'])
+
+        self.assertNotIn('conversion_report', self.read()['runs'][-1])
+
+    def test_schema_fingerprint_ties_the_run_to_the_exact_snapshot(self):
+        """
+        schema_harvested/schema_harvested_by narrow down which snapshot a
+        download used; they do not pin it, since two harvests can share a
+        date and version. schema_fingerprint is what pins it.
+        """
+        unit, result = makeUnit()
+        schema = Schema.loadSchema('oas')
+        self.write([Provenance.buildUnitRecord(unit, result, self.out)],
+                  ['airr'], schema=schema)
+
+        run = self.read()['runs'][-1]
+        self.assertEqual(run['schema_fingerprint'], Schema.fingerprint('oas'))
+
+    def test_no_schema_fingerprint_when_the_schema_is_unknown(self):
+        unit, result = makeUnit()
+        self.write([Provenance.buildUnitRecord(unit, result, self.out)], ['raw'])
+
+        self.assertNotIn('schema_fingerprint', self.read()['runs'][-1])
 
 
 class TestNaming(unittest.TestCase):

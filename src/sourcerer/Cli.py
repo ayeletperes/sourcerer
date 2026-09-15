@@ -943,6 +943,11 @@ def handleDownload(args):
     written = {x: [] for x in set(formats) | {'raw'}}
     loci = {}
     provenance = []
+    # Accumulated across every unit converted this run and written into
+    # download_metadata.yml, since a conversion that silently drops or
+    # mismaps rows would otherwise leave nothing on disk saying so. Stays
+    # empty (and so unwritten) on a raw-only run, where nothing is converted.
+    conversion_total = {}
 
     for unit in units:
         result = source.fetchUnit(unit, raw_dir, resume=not args.no_resume)
@@ -972,6 +977,7 @@ def handleDownload(args):
                     writer.close()
 
             loci[unit.unit_id] = report['loci']
+            Provenance.mergeConversionReport(conversion_total, report)
             for fmt, writer in writers.items():
                 written[fmt].append((unit, writer.out))
                 outputs[fmt] = writer.out
@@ -1015,7 +1021,7 @@ def handleDownload(args):
     record = Provenance.writeDownloadMetadata(
         outdir, args.source, args.collection, collectFilters(args), args.limit,
         formats, provenance, schema=source.schema, license=source.license,
-        citation=source.citation)
+        citation=source.citation, conversion_report=conversion_total)
     log.info('wrote %s', record)
 
     return 0

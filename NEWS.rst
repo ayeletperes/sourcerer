@@ -39,6 +39,11 @@ General:
   otherwise look like real drift.
 + Added a download provenance record (what was fetched, from where, when, and
   its hash) written alongside every download.
++ ``download_metadata.yml`` now also records a ``conversion_report`` (row
+  counts and per-category problem counts, summed across every unit converted
+  that run) and a ``schema_fingerprint`` tying the download to the exact
+  snapshot content it was resolved against, not only an approximate harvest
+  date and tool version.
 + Added ``sourcerer oas verify``, which reads an already-downloaded
   samplesheet and cross-references each row's subject against NCBI's own
   record for the run or sample accession named in it, writing an evidence

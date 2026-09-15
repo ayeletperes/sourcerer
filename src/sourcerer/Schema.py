@@ -404,6 +404,50 @@ def loadSchema(source, path=None):
     return fromDict(payload)
 
 
+def fingerprint(source, path=None):
+    """
+    Hash a source's stored snapshot into one string identifying its content.
+
+    `harvested`/`harvested_by` (recorded separately, on the download
+    provenance record) narrow down which snapshot a download was resolved
+    against but do not pin it: two harvests on the same day, or a
+    hand-edited snapshot, share both and can still differ in content. This
+    hashes schema.yaml's own bytes, and folds in the catalog fingerprint's
+    own sha256 when the source has one (only OAS does today, via
+    catalog_fingerprint.json), since the search fields alone would miss a
+    catalog-only change.
+
+    Arguments:
+      source (str): the source name.
+      path (Path): a directory to read instead of the packaged snapshot.
+
+    Returns:
+      str: a sha256 hex digest, or None if no schema.yaml is stored.
+    """
+    import hashlib
+
+    from sourcerer.Contracts import loadFingerprint
+
+    if path is not None:
+        handle = Path(path) / 'schema.yaml'
+        if not handle.exists():
+            return None
+        text = handle.read_text()
+    else:
+        anchor = resources.files('sourcerer').joinpath('data/schemas', source,
+                                                       'schema.yaml')
+        if not anchor.is_file():
+            return None
+        text = anchor.read_text()
+
+    digest = hashlib.sha256(text.encode('utf-8'))
+    catalog_sha256 = (loadFingerprint(source, path=path) or {}).get('sha256')
+    if catalog_sha256:
+        digest.update(catalog_sha256.encode('utf-8'))
+
+    return digest.hexdigest()
+
+
 #: Fields that record when a harvest ran rather than what it found. They are
 #: excluded when deciding whether a snapshot actually changed.
 HARVEST_STAMPS = ('harvested', 'harvested_by')

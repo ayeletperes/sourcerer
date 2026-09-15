@@ -424,6 +424,50 @@ class TestCatalogEnrichment(unittest.TestCase):
                          'Plasmablasts, Memory B cells and activated T cells')
 
 
+class TestCatalogFingerprint(unittest.TestCase):
+    """
+    Tests for condensing the unpaired catalog into a fingerprint
+    """
+
+    def test_fingerprint_names_its_own_collection(self):
+        """
+        The fingerprint records which collection it covers rather than
+        leaving a reader (Drift.compareFingerprints, Drift.findAnomalies) to
+        assume one. Today that is always 'unpaired' -- OAS publishes no
+        machine readable paired index -- but the label still has to come
+        from the catalog rows actually fingerprinted, not be hardcoded
+        downstream.
+        """
+        payload = {
+            '/vols/naga-datasets/oas/unpaired/Study_A/csv/one.csv.gz':
+                {'Species': 'human'},
+            '/vols/naga-datasets/oas/unpaired/Study_B/csv/two.csv.gz':
+                {'Species': 'mouse_BALB/c'},
+        }
+
+        fingerprint = Oas.buildFingerprint(b'raw', {}, payload)
+
+        self.assertEqual(fingerprint['collection'], 'unpaired')
+
+    def test_a_mixed_collection_payload_leaves_the_label_unset(self):
+        """
+        A single fixed collection is what today's fingerprint is inherently
+        about; a payload that somehow named more than one is a fact worth
+        surfacing as an unlabeled (source wide) finding rather than guessing
+        which collection the drift is really about.
+        """
+        payload = {
+            '/vols/naga-datasets/oas/unpaired/Study_A/csv/one.csv.gz':
+                {'Species': 'human'},
+            '/vols/naga-datasets/oas/paired/Study_B/csv/two.csv.gz':
+                {'Species': 'human'},
+        }
+
+        fingerprint = Oas.buildFingerprint(b'raw', {}, payload)
+
+        self.assertIsNone(fingerprint['collection'])
+
+
 class TestKnownFields(unittest.TestCase):
     """
     The contract between the snapshot and the code

@@ -667,9 +667,44 @@ def buildFingerprint(content, headers, payload):
     """
     Condense the raw unpaired catalog into the facts the drift check compares.
 
-    key_counts is what surfaces a key present on a strict subset of units: any
-    count that is neither zero nor n_units is by definition partial, which is
-    the anomaly the drift check reports.
+    The unpaired catalog is a single ~7 MB JSON document, one entry per data
+    unit. Diffing it whole every month would be slow to fetch and unreadable
+    to review, so this reduces it once, at harvest time, to the handful of
+    aggregate facts Drift.py actually looks at, written to
+    catalog_fingerprint.json and compared against the version committed at
+    the last drift check.
+
+    Returned fields, and what each is for:
+
+    - ``collection``: the collection the fingerprinted rows belong to
+      ('unpaired' today, since that is the only machine readable index OAS
+      publishes), or None if the payload named more than one -- see the
+      comment on that key below. Drift.py labels its findings from this
+      rather than assuming a name.
+    - ``sha256`` / ``etag`` / ``last_modified``: cheap validators for "did the
+      document change at all", checked before the more expensive comparisons
+      below run.
+    - ``n_units``: the catalog's total row count; growth or shrinkage between
+      two fingerprints is reported directly from this.
+    - ``key_counts``: how many units carry each metadata key. A key whose
+      count is neither 0 nor n_units is present on a strict subset of units --
+      by definition partial -- which is the anomaly the drift check reports
+      (the real world case: a stray 'Organism' key on exactly 1 of 15,631
+      unpaired units).
+    - ``value_types``: the distinct JSON types seen for each key's values
+      (see jsonTypeName), so a key silently changing shape (e.g. a count
+      written as a string instead of a number) is caught even though the key
+      itself did not change.
+    - ``value_counts``: how many units carry each distinct value of each key,
+      capped per key at MAX_FINGERPRINT_VALUES entries -- past that (an
+      accession-like key with one value per unit, say) the key's entry is
+      None instead, since enumerating unique-per-unit values would make the
+      fingerprint scale with the catalog rather than stay a summary.
+    - ``study_index``: unit count per study, both a human readable summary and
+      what a drift finding's "N new units in <study>" grouping is built from.
+    - ``sample_unit``: one verbatim catalog entry (the first key in sorted
+      order), kept as a live example of the document's actual shape and as a
+      lightweight parser fixture.
 
     Arguments:
       content (bytes): the catalog document as served.
@@ -677,14 +712,16 @@ def buildFingerprint(content, headers, payload):
       payload (dict): the parsed catalog.
 
     Returns:
-      dict: the fingerprint.
+      dict: the fingerprint, with the fields described above.
     """
     key_counts = {}
     value_types = {}
     value_counts = {}
     studies = {}
+    collections = set()
     for key, meta in payload.items():
         collection, unit_id = unitIdFromUrl(urlFromCatalogKey(key))
+        collections.add(collection)
         study = unit_id.split('/')[0]
         studies[study] = studies.get(study, 0) + 1
         for name, value in meta.items():
@@ -697,6 +734,13 @@ def buildFingerprint(content, headers, payload):
                     value_counts[name] = None
 
     return {
+        # The Drift findings this fingerprint feeds label themselves from this
+        # field rather than assuming a fixed collection name. Today this is
+        # always 'unpaired' -- the unpaired catalog is the only one OAS
+        # publishes as a machine readable index -- but a mixed document, were
+        # one ever fed in, is a fact worth recording rather than guessing a
+        # label from, so it is left unset (None) rather than picking one side.
+        'collection': next(iter(collections)) if len(collections) == 1 else None,
         'sha256': hashlib.sha256(content).hexdigest(),
         'n_units': len(payload),
         'etag': headers.get('ETag', ''),

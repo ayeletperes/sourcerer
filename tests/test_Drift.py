@@ -211,6 +211,34 @@ class TestFingerprintComparison(unittest.TestCase):
 
         self.assertEqual([x.level for x in findings], ['structural'])
 
+    def test_the_collection_label_comes_from_the_fingerprint_not_a_constant(self):
+        """
+        The fingerprint names its own collection (see buildFingerprint); this
+        module must read that rather than assume a fixed one, so a finding is
+        labeled for whichever collection was actually fingerprinted.
+        """
+        old = {'n_units': 10, 'key_counts': {}, 'value_types': {},
+              'collection': 'unpaired'}
+        new = {'n_units': 12, 'key_counts': {}, 'value_types': {},
+              'collection': 'unpaired'}
+
+        findings = Drift.compareFingerprints(old, new)
+
+        self.assertEqual([x.collection for x in findings], ['unpaired'])
+
+    def test_the_fresh_side_labels_the_finding_when_the_two_disagree(self):
+        """
+        The findings describe the fresh catalog, so its own label wins over a
+        stale one carried on the stored side.
+        """
+        old = {'n_units': 10, 'key_counts': {}, 'value_types': {}}
+        new = {'n_units': 12, 'key_counts': {}, 'value_types': {},
+              'collection': 'unpaired'}
+
+        findings = Drift.compareFingerprints(old, new)
+
+        self.assertEqual([x.collection for x in findings], ['unpaired'])
+
 
 class TestNewSnapshotChecks(unittest.TestCase):
     """
@@ -220,11 +248,14 @@ class TestNewSnapshotChecks(unittest.TestCase):
     def test_a_partial_key_is_an_anomaly(self):
         """The Organism-on-one-unit case: neither absent nor universal."""
         snapshot = Snapshot(fingerprint={
-            'n_units': 15631, 'key_counts': {'Species': 15631, 'Organism': 1}})
+            'n_units': 15631, 'key_counts': {'Species': 15631, 'Organism': 1},
+            'collection': 'unpaired'})
         findings = Drift.findAnomalies(snapshot)
 
         self.assertEqual([x.level for x in findings], ['anomaly'])
         self.assertIn("'Organism' is present on 1 of 15631", findings[0].message)
+        # The label comes from the fingerprint itself, not an assumed constant.
+        self.assertEqual(findings[0].collection, 'unpaired')
 
     def test_an_unresolvable_unit_id_is_structural(self):
         """

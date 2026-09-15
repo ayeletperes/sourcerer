@@ -502,6 +502,12 @@ def compareFingerprints(old, new):
     """
     findings = []
 
+    # The fingerprint names its own collection (buildFingerprint stamps it
+    # from the catalog rows actually fingerprinted) rather than this module
+    # assuming one; the fresh side wins when both are known, since it
+    # describes the catalog the findings below are actually about.
+    collection = (new or {}).get('collection') or (old or {}).get('collection')
+
     before_keys = set((old or {}).get('key_counts') or {})
     after_keys = set((new or {}).get('key_counts') or {})
     for key in sorted(after_keys - before_keys):
@@ -512,11 +518,11 @@ def compareFingerprints(old, new):
         findings.append(Finding(
             level, 'catalog-key',
             "catalog key '%s' appeared on %d of %d units"
-            % (key, count, new.get('n_units', 0)), 'unpaired'))
+            % (key, count, new.get('n_units', 0)), collection))
     for key in sorted(before_keys - after_keys):
         findings.append(Finding(
             'structural', 'catalog-key',
-            "catalog key '%s' disappeared" % key, 'unpaired'))
+            "catalog key '%s' disappeared" % key, collection))
 
     before_types = (old or {}).get('value_types') or {}
     after_types = (new or {}).get('value_types') or {}
@@ -525,7 +531,7 @@ def compareFingerprints(old, new):
             findings.append(Finding(
                 'structural', 'value-type',
                 "catalog key '%s' changed type from %s to %s"
-                % (key, before_types[key], after_types[key]), 'unpaired'))
+                % (key, before_types[key], after_types[key]), collection))
 
     old_units = (old or {}).get('n_units')
     new_units = (new or {}).get('n_units')
@@ -534,12 +540,12 @@ def compareFingerprints(old, new):
             findings.append(Finding(
                 'additive', 'catalog',
                 'catalog grew from %d to %d units' % (old_units, new_units),
-                'unpaired'))
+                collection))
         elif new_units < old_units:
             findings.append(Finding(
                 'removed', 'catalog',
                 'catalog shrank from %d to %d units' % (old_units, new_units),
-                'unpaired'))
+                collection))
 
     return findings
 
@@ -561,13 +567,14 @@ def findAnomalies(snapshot):
     findings = []
 
     fingerprint = snapshot.fingerprint or {}
+    collection = fingerprint.get('collection')
     n_units = fingerprint.get('n_units', 0)
     for key, count in sorted((fingerprint.get('key_counts') or {}).items()):
         if 0 < count < n_units:
             findings.append(Finding(
                 'anomaly', 'partial-key',
                 "catalog key '%s' is present on %d of %d units"
-                % (key, count, n_units), 'unpaired'))
+                % (key, count, n_units), collection))
 
     if snapshot.schema is None:
         return findings

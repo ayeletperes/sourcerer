@@ -19,6 +19,16 @@ collections:
       - IGL
       wildcard: '*'
     reported_totals: {}
+  rhesus:
+    fields:
+    - name: locus
+      pseudo_values: false
+      values:
+      - IGH
+      - IGK
+      - IGL
+      wildcard: '*'
+    reported_totals: {}
 field_aliases: {}
 harvested: '2026-08-06T00:00:00Z'
 harvested_by: sourcerer 0.1.0

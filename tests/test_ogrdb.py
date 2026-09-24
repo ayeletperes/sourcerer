@@ -140,6 +140,16 @@ class TestSearchUnits(unittest.TestCase):
         self.assertEqual({u.metadata['locus'] for u in units},
                          {'IGH', 'IGK', 'IGL'})
 
+    def test_rhesus_is_offered_with_its_own_set_names(self):
+        """Rhesus is a collection; its sets are the rhesus-specific names, not
+        human's IGKappa_VJ/IGLambda_VJ."""
+        from sourcerer.Sources.Ogrdb import SETS
+
+        self.assertIn('rhesus', OgrdbSource.collections)
+        names = {name for (sp, _locus), sets in SETS.items() if sp == 'rhesus'
+                 for name, _chains in sets}
+        self.assertEqual(names, {'IGH_VDJ', 'IGK_VJ', 'IGL_VJ'})
+
 
 class TestBuildReference(unittest.TestCase):
     """

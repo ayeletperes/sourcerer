@@ -5,6 +5,9 @@ collections:
   mouse:
     fields: []
     reported_totals: {}
+  rhesus:
+    fields: []
+    reported_totals: {}
 field_aliases: {}
 harvested: '2026-08-06T00:00:00Z'
 harvested_by: sourcerer 0.1.0

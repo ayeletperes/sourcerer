@@ -75,6 +75,16 @@ class TestSearchUnits(unittest.TestCase):
                         and not u.metadata['locus'].startswith('TR')}
         self.assertEqual(ig_constants, {'IGHC', 'IGKC', 'IGLC'})
 
+    def test_rhesus_is_offered_and_takes_all_ig_constants_from_imgt(self):
+        """Rhesus is a collection; like mouse it has no OGRDB constant set, so
+        all three constants come from IMGT."""
+        self.assertIn('rhesus', AirrcImgtSource.collections)
+        gap = self.source._imgtGapUnits('rhesus')
+        ig_constants = {u.metadata['chain'] for u in gap
+                        if u.metadata['kind'] == 'constant'
+                        and not u.metadata['locus'].startswith('TR')}
+        self.assertEqual(ig_constants, {'IGHC', 'IGKC', 'IGLC'})
+
 
 class TestBuildReference(unittest.TestCase):
     """

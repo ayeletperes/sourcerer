@@ -32,10 +32,13 @@ Germline references:
   (``sourcerer ogrdb``, also reachable as ``sourcerer airrc``), and an
   ``airrc-imgt`` blend that takes immunoglobulin V, D and J from OGRDB's AIRR-C
   sets and the T-cell receptor and remaining constants from IMGT.
-+ Added rhesus macaque (``Macaca mulatta``) to the IMGT and OGRDB sources
-  (``sourcerer imgt download rhesus`` / ``sourcerer ogrdb download rhesus``).
++ Added rhesus macaque (``Macaca mulatta``) to the IMGT, OGRDB and
+  ``airrc-imgt`` sources (``sourcerer imgt download rhesus`` /
+  ``sourcerer ogrdb download rhesus`` / ``sourcerer airrc-imgt download rhesus``).
   IMGT gives the full V, D, J, constant and translated-V coverage; OGRDB gives
-  its curated AIRR-C immunoglobulin V, D and J sets (no constants).
+  its curated AIRR-C immunoglobulin V, D and J sets (no constants); the blend
+  takes the immunoglobulin V, D and J from OGRDB and all the T-cell receptor and
+  constants from IMGT.
 + Added ``sourcerer <source> download <species>``, which writes the germline
   ``reference_base`` in the `nf-core/airrflow`_ layout, and ``--igblast`` to also
   build the IgBLAST databases (``makeblastdb`` plus the NCBI internal_data and

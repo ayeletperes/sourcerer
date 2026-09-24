@@ -47,7 +47,7 @@ log = logging.getLogger(__name__)
 
 #: Species airrflow builds references for, and the leading directory in the
 #: reference tree. New species are added here and in each source's SETS/CHAINS.
-SPECIES = ('human', 'mouse')
+SPECIES = ('human', 'mouse', 'rhesus')
 
 #: Receptor classes, matching airrflow's canonical database basenames.
 LOCI = ('ig', 'tr')

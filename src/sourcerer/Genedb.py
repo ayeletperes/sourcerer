@@ -54,7 +54,8 @@ GROUPS = {'nt': BULK_NT, 'aa': BULK_AA}
 
 #: Species as they appear in the IMGT headers. A header may carry a strain suffix
 #: (``Mus musculus_C57BL/6``), so a species is matched on this binomial prefix.
-SPECIES_LABEL = {'human': 'Homo sapiens', 'mouse': 'Mus musculus'}
+SPECIES_LABEL = {'human': 'Homo sapiens', 'mouse': 'Mus musculus',
+                 'rhesus': 'Macaca mulatta'}
 
 #: A constant region under this many nucleotides is the delta diversity segment
 #: sharing the IGHD name, told apart from the delta constant by length, exactly

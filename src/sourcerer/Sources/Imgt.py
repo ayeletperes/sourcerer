@@ -54,8 +54,10 @@ Q_AA = '7.3'            # translated V
 
 #: Species as GENElect wants them in the query string, and as they appear in the
 #: FASTA headers. The query form is pre-encoded so it is not double-escaped.
-SPECIES_QUERY = {'human': 'Homo%20sapiens', 'mouse': 'Mus%20musculus'}
-SPECIES_LABEL = {'human': 'Homo sapiens', 'mouse': 'Mus musculus'}
+SPECIES_QUERY = {'human': 'Homo%20sapiens', 'mouse': 'Mus%20musculus',
+                 'rhesus': 'Macaca%20mulatta'}
+SPECIES_LABEL = {'human': 'Homo sapiens', 'mouse': 'Mus musculus',
+                 'rhesus': 'Macaca mulatta'}
 
 #: Chains fetched as V/D/J nucleotide.
 VDJ_CHAINS = ('IGHV', 'IGHD', 'IGHJ', 'IGKV', 'IGKJ', 'IGLV', 'IGLJ',
@@ -184,9 +186,10 @@ class ImgtSource(ReferenceSource):
     prefix = 'imgt'
     description = 'IMGT/GENE-DB: germline V, D, J and C reference sequences'
     homepage = 'https://www.imgt.org/genedb/'
-    collections = ('human', 'mouse')
+    collections = ('human', 'mouse', 'rhesus')
     collection_help = {'human': 'Homo sapiens germline reference',
-                       'mouse': 'Mus musculus germline reference'}
+                       'mouse': 'Mus musculus germline reference',
+                       'rhesus': 'Macaca mulatta germline reference'}
 
     #: IMGT's reuse terms are not an open-data licence; germline data may be used
     #: for research on condition IMGT is cited. Recorded so a reader of a download

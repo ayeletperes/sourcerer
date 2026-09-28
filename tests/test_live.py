@@ -1,7 +1,7 @@
 """
 Live API checks for the reference sources
 
-These contact IMGT and OGRDB for real, so they are skipped unless SOURCERER_LIVE
+These contact IMGT and OGRDB for real, so they are skipped unless IMMVOKE_LIVE
 is set in the environment. The weekly check-apis workflow sets it and runs this
 module on its own; a red run there is the early warning that an upstream API
 changed shape before a user's download hits the same failure.
@@ -17,20 +17,20 @@ __author__ = 'Ayelet Peres'
 import os
 import unittest
 
-# Sourcerer imports
-from sourcerer.Http import HttpClient
-from sourcerer.Sources.Imgt import (
+# Immvoke imports
+from immvoke.Http import HttpClient
+from immvoke.Sources.Imgt import (
     ImgtSource,
     buildQueryUrl,
     extractFasta,
     isValidResponse,
 )
-from sourcerer.Sources.Ogrdb import OgrdbSource
+from immvoke.Sources.Ogrdb import OgrdbSource
 
-LIVE = os.environ.get('SOURCERER_LIVE')
+LIVE = os.environ.get('IMMVOKE_LIVE')
 
 
-@unittest.skipUnless(LIVE, 'set SOURCERER_LIVE=1 to contact IMGT and OGRDB')
+@unittest.skipUnless(LIVE, 'set IMMVOKE_LIVE=1 to contact IMGT and OGRDB')
 class TestImgtLive(unittest.TestCase):
     """
     Live checks against IMGT/GENE-DB
@@ -53,7 +53,7 @@ class TestImgtLive(unittest.TestCase):
                         'the IMGT release tag could not be read')
 
 
-@unittest.skipUnless(LIVE, 'set SOURCERER_LIVE=1 to contact IMGT and OGRDB')
+@unittest.skipUnless(LIVE, 'set IMMVOKE_LIVE=1 to contact IMGT and OGRDB')
 class TestOgrdbLive(unittest.TestCase):
     """
     Live checks against OGRDB
@@ -72,7 +72,7 @@ class TestOgrdbLive(unittest.TestCase):
 
     def test_set_resolves_to_a_downloadable_fasta(self):
         """A set resolves to a release whose FASTA download is non-empty."""
-        from sourcerer.Sources.Base import Query
+        from immvoke.Sources.Base import Query
 
         units = self.source.searchUnits(
             Query(collection='human', filters={'locus': 'IGK'}))
@@ -82,14 +82,14 @@ class TestOgrdbLive(unittest.TestCase):
         self.assertIn('>', body, 'the OGRDB FASTA download was empty')
 
 
-@unittest.skipUnless(LIVE, 'set SOURCERER_LIVE=1 to contact IMGT and OGRDB')
+@unittest.skipUnless(LIVE, 'set IMMVOKE_LIVE=1 to contact IMGT and OGRDB')
 class TestGenedbLive(unittest.TestCase):
     """
     Live checks against the genedb-releases archive that `download --from` uses
     """
 
     def setUp(self):
-        from sourcerer import Genedb
+        from immvoke import Genedb
 
         self.genedb = Genedb
         self.client = HttpClient()

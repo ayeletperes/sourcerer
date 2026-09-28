@@ -23,8 +23,8 @@ from pathlib import Path
 
 import yaml
 
-# Sourcerer imports
-from sourcerer.Exceptions import SchemaError
+# Immvoke imports
+from immvoke.Exceptions import SchemaError
 
 #: Snapshot format version this code understands. A snapshot declaring a higher
 #: version is refused rather than misread.
@@ -243,7 +243,7 @@ class SourceSchema:
         close = difflib.get_close_matches(value, target.values, n=3, cutoff=0.6)
         if close:
             message += '; did you mean: %s' % ', '.join(close)
-        message += ("; run 'sourcerer schema show --source %s --collection %s "
+        message += ("; run 'immvoke schema show --source %s --collection %s "
                     "--field %s' to list them" % (self.source, collection_name,
                                                   target.name))
 
@@ -269,8 +269,8 @@ def fromDict(payload):
 
     if version > SCHEMA_VERSION:
         raise SchemaError(
-            'snapshot declares schema_version %s but this sourcerer understands '
-            'at most %s; upgrade sourcerer rather than reading it partially'
+            'snapshot declares schema_version %s but this immvoke understands '
+            'at most %s; upgrade immvoke rather than reading it partially'
             % (version, SCHEMA_VERSION))
 
     collections = {}
@@ -356,11 +356,11 @@ def loadSchema(source, path=None):
         # importlib.resources rather than a path relative to __file__, so that the
         # snapshot is read from the installed wheel and a packaging mistake fails
         # here instead of silently reading the source tree.
-        anchor = resources.files('sourcerer').joinpath('data/schemas', source,
+        anchor = resources.files('immvoke').joinpath('data/schemas', source,
                                                        'schema.yaml')
         if not anchor.is_file():
             raise SchemaError(
-                "no packaged schema for source '%s'; run 'sourcerer schema "
+                "no packaged schema for source '%s'; run 'immvoke schema "
                 "refresh --source %s'" % (source, source))
         text = anchor.read_text()
 

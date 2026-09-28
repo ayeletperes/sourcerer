@@ -266,7 +266,7 @@ field_aliases:
   Individual: Subject
   Organism: Species
 harvested: '2026-08-04T14:40:49Z'
-harvested_by: sourcerer 0.1.0
+harvested_by: immvoke 0.1.0
 parse_contracts:
   count_regex: yielded\s*<b>([\d,]+)</b>\s*filtered sequences from\s*<b>([\d,]+)</b>\s*studies
   csv_array_marker: var CSV = [

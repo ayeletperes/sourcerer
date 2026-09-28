@@ -1,7 +1,7 @@
-sourcerer.Sources
+immvoke.Sources
 -----------------
 
-.. automodule:: sourcerer.Sources
+.. automodule:: immvoke.Sources
     :members:
     :undoc-members:
     :show-inheritance:

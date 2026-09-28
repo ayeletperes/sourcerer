@@ -4,7 +4,7 @@ Download
 ================================================================================
 
 Development versions and source code are available on
-`GitHub <https://github.com/immcantation/sourcerer>`__.
+`GitHub <https://github.com/immcantation/immvoke>`__.
 
 .. _Installation:
 

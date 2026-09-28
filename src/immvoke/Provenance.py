@@ -23,9 +23,9 @@ from pathlib import Path
 
 import yaml
 
-# Sourcerer imports
-from sourcerer.Exceptions import SourcererError
-from sourcerer.Version import __version__
+# Immvoke imports
+from immvoke.Exceptions import ImmvokeError
+from immvoke.Version import __version__
 
 log = logging.getLogger(__name__)
 
@@ -80,18 +80,18 @@ def loadMetadata(path):
       dict: the parsed record, or a fresh skeleton if the file does not exist.
 
     Raises:
-      SourcererError: if the file exists but was not written by sourcerer.
+      ImmvokeError: if the file exists but was not written by immvoke.
     """
     path = Path(path)
     if not path.exists():
-        return {'sourcerer_metadata_version': METADATA_VERSION,
+        return {'immvoke_metadata_version': METADATA_VERSION,
                 'runs': [], 'units': []}
 
     with open(path) as handle:
         record = yaml.safe_load(handle)
 
-    if not isinstance(record, dict) or 'sourcerer_metadata_version' not in record:
-        raise SourcererError('%s was not written by sourcerer, refusing to '
+    if not isinstance(record, dict) or 'immvoke_metadata_version' not in record:
+        raise ImmvokeError('%s was not written by immvoke, refusing to '
                              'overwrite it' % path)
 
     record.setdefault('runs', [])
@@ -172,7 +172,7 @@ def commandLine():
     Returns:
       str: the command line.
     """
-    return ' '.join(['sourcerer'] + sys.argv[1:])
+    return ' '.join(['immvoke'] + sys.argv[1:])
 
 
 def writeDownloadMetadata(out, source, collection, filters, limit, formats,
@@ -192,7 +192,7 @@ def writeDownloadMetadata(out, source, collection, filters, limit, formats,
       units (list): unit records from buildUnitRecord.
       schema (SourceSchema): the snapshot the query resolved against, if known.
       license (str): the source's data license, if known. Recorded so a reader
-        of this directory alone, with no access to sourcerer's own docs, still
+        of this directory alone, with no access to immvoke's own docs, still
         knows the terms the data was obtained under.
       citation (tuple): the source's requested citation(s), if known, for the
         same reason.
@@ -224,9 +224,9 @@ def writeDownloadMetadata(out, source, collection, filters, limit, formats,
     # Rebuilt in a fixed order rather than updated in place, so the header keys
     # stay at the top of the file however the loaded record was ordered.
     merged = {
-        'sourcerer_metadata_version': METADATA_VERSION,
+        'immvoke_metadata_version': METADATA_VERSION,
         'source': source,
-        'generated_by': 'sourcerer %s' % __version__,
+        'generated_by': 'immvoke %s' % __version__,
     }
     if license is not None:
         merged['data_license'] = license

@@ -1,7 +1,7 @@
-sourcerer.Airrflow
+immvoke.Airrflow
 ------------------
 
-.. automodule:: sourcerer.Airrflow
+.. automodule:: immvoke.Airrflow
     :members:
     :undoc-members:
     :show-inheritance:

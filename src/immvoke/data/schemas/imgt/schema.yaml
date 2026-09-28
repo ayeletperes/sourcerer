@@ -45,7 +45,7 @@ collections:
     reported_totals: {}
 field_aliases: {}
 harvested: '2026-08-06T00:00:00Z'
-harvested_by: sourcerer 0.1.0
+harvested_by: immvoke 0.1.0
 parse_contracts:
   fasta_block: second <pre> element
   header: pipe-delimited, allele in field 2

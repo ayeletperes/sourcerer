@@ -27,7 +27,7 @@ jobs:
           pip install .
       - name: Probe the reference APIs
         env:
-          SOURCERER_LIVE: '1'
+          IMMVOKE_LIVE: '1'
         run: python -m unittest tests.test_live -v
       # On failure the run goes red and GitHub notifies the watchers. Opening an
       # issue automatically is intentionally left off; enable the step below if a

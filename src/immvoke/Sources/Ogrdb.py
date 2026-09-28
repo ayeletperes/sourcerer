@@ -30,18 +30,18 @@ from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
-# Sourcerer imports
-from sourcerer import Reference
-from sourcerer.Exceptions import OgrdbParseError
-from sourcerer.Reference import (
+# Immvoke imports
+from immvoke import Reference
+from immvoke.Exceptions import OgrdbParseError
+from immvoke.Reference import (
     KIND_CONSTANT,
     KIND_VDJ,
     ReferenceReport,
     parseFasta,
 )
-from sourcerer.Sources.Base import DataUnit
-from sourcerer.Sources.Germline import ReferenceSource
-from sourcerer.Version import __version__
+from immvoke.Sources.Base import DataUnit
+from immvoke.Sources.Germline import ReferenceSource
+from immvoke.Version import __version__
 
 log = logging.getLogger(__name__)
 
@@ -333,8 +333,8 @@ class OgrdbSource(ReferenceSource):
         """
         from datetime import datetime
 
-        from sourcerer.Schema import Collection, Field, SourceSchema
-        from sourcerer.Version import __version__
+        from immvoke.Schema import Collection, Field, SourceSchema
+        from immvoke.Version import __version__
 
         collections = {}
         for sp in self.collections:
@@ -349,7 +349,7 @@ class OgrdbSource(ReferenceSource):
         return SourceSchema(
             source=self.name,
             harvested=datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            harvested_by='sourcerer %s' % __version__,
+            harvested_by='immvoke %s' % __version__,
             source_urls={'api': API},
             parse_contracts={'segment_split': 'V,C gapped; D,J ungapped; '
                                               'delta D vs C by length'},
@@ -474,7 +474,7 @@ class OgrdbSource(ReferenceSource):
 
         path = Reference.writeAirrcMetadata(
             reference_dir, sets, datetime.now(UTC).strftime('%Y-%m-%d'),
-            'sourcerer %s' % __version__)
+            'immvoke %s' % __version__)
 
         return [path]
 
@@ -487,7 +487,7 @@ class OgrdbSource(ReferenceSource):
         the table row whose set, version and release date match. This is HTML
         scraping of a form-driven page and is best-effort by nature; a failure to
         find the DOI is logged and left out, never fatal. The page is read with
-        the parser the rest of sourcerer uses, so a reordered attribute or a tag
+        the parser the rest of immvoke uses, so a reordered attribute or a tag
         inside a cell does not silently stop matching.
 
         Arguments:

@@ -15,9 +15,9 @@ from pathlib import Path
 
 import yaml
 
-# Sourcerer imports
-from sourcerer import Reference
-from sourcerer.Exceptions import SourcererError
+# Immvoke imports
+from immvoke import Reference
+from immvoke.Exceptions import ImmvokeError
 
 HAS_MAKEBLASTDB = shutil.which('makeblastdb') is not None
 
@@ -116,7 +116,7 @@ class TestExtractTar(unittest.TestCase):
 
             dest = tmp / 'out'
             dest.mkdir()
-            with self.assertRaises(SourcererError):
+            with self.assertRaises(ImmvokeError):
                 Reference.extractTar(archive, dest)
             self.assertFalse((tmp / 'escaped.txt').exists())
 
@@ -159,7 +159,7 @@ class TestBuildIgblastBase(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 fasta = Path(tmp) / 'x.fasta'
                 fasta.write_text('>a\nACGT\n')
-                with self.assertRaises(SourcererError) as caught:
+                with self.assertRaises(ImmvokeError) as caught:
                     Reference.runMakeblastdb(fasta, Path(tmp) / 'x', 'nucl')
                 self.assertIn('makeblastdb', str(caught.exception))
         finally:
@@ -263,7 +263,7 @@ class TestMetadata(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             path = Reference.writeImgtMetadata(tmp, ['human'], '202631-7',
-                                               '2026-08-14', 'sourcerer 0.1.0')
+                                               '2026-08-14', 'immvoke 0.1.0')
             self.assertEqual(path.name, 'IMGT.yaml')
             pins = Reference.loadReferencePins(tmp)
             self.assertEqual(pins['imgt']['species']['human']['release'],
@@ -276,7 +276,7 @@ class TestMetadata(unittest.TestCase):
             tmp = Path(tmp)
             sets = [{'species': 'human', 'locus': 'IGH', 'set': 'IGH_VDJ',
                      'version': '3', 'release_date': '2024-01-01'}]
-            Reference.writeAirrcMetadata(tmp, sets, '2026-08-14', 'sourcerer 0.1.0')
+            Reference.writeAirrcMetadata(tmp, sets, '2026-08-14', 'immvoke 0.1.0')
             pins = Reference.loadReferencePins(tmp)
             self.assertEqual(pins['airrc']['sets'][0]['version'], '3')
 
@@ -295,7 +295,7 @@ class TestMetadata(unittest.TestCase):
     def test_load_pins_rejects_a_folder_without_sidecars(self):
         """--from a folder that holds neither sidecar is an error, not a no-op."""
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(SourcererError):
+            with self.assertRaises(ImmvokeError):
                 Reference.loadReferencePins(Path(tmp))
 
     def test_build_metadata_records_the_build_and_carries_provenance(self):
@@ -309,9 +309,9 @@ class TestMetadata(unittest.TestCase):
                                                skipped_empty=['human_tr_d'])
 
             written = Reference.writeBuildMetadata(out, report, src, '2026-08-14',
-                                                   'sourcerer 0.1.0')
+                                                   'immvoke 0.1.0')
             self.assertIn(out / 'IMGT.yaml', written)  # carried forward
-            record = yaml.safe_load((out / 'sourcerer_build.yaml').read_text())
+            record = yaml.safe_load((out / 'immvoke_build.yaml').read_text())
             self.assertEqual(record['databases'], ['human_ig_v'])
             # Recorded relative to the built directory, so moving the pair keeps
             # the link; resolving it from there must land back on the source.
@@ -350,7 +350,7 @@ class TestReferenceMap(unittest.TestCase):
             for bad in ('a.fasta\tmartian\tIGHV\n', 'a.fasta\thuman\tIGXV\n',
                         'a.fasta\thuman\n'):
                 path = self.writeManifest(tmp, bad)
-                with self.assertRaises(SourcererError):
+                with self.assertRaises(ImmvokeError):
                     Reference.loadReferenceMap(path)
 
     def test_manifest_places_a_file_the_naming_rule_skips(self):
@@ -469,7 +469,7 @@ class TestShortenName(unittest.TestCase):
                 fasta = tmp / ('%s.fasta' % label)
                 fasta.write_text('>%s\nACGTACGTACGTACGTACGTACGT\n' % name)
                 if label == 'long':
-                    with self.assertRaises(SourcererError):
+                    with self.assertRaises(ImmvokeError):
                         Reference.runMakeblastdb(fasta, tmp / label, 'nucl')
                 else:
                     Reference.runMakeblastdb(fasta, tmp / label, 'nucl')
@@ -532,7 +532,7 @@ class TestDescribeReference(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self.build(tmp)
             Reference.writeImgtMetadata(root, ['human'], '202631-7',
-                                        '2026-08-24', 'sourcerer test')
+                                        '2026-08-24', 'immvoke test')
             text = Reference.describeReference(root)
         self.assertIn('202631-7', text)
         self.assertIn('IGHV', text)
@@ -543,7 +543,7 @@ class TestDescribeReference(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self.build(tmp)
             Reference.writeImgtMetadata(root, ['human'], '202631-7',
-                                        '2026-08-24', 'sourcerer test')
+                                        '2026-08-24', 'immvoke test')
             text = Reference.describeReference(Path(tmp))
         self.assertIn('202631-7', text)
 

@@ -10,17 +10,17 @@ these exceptions exist so that every failure names what was expected and where.
 __author__ = 'Susanna Marquez'
 
 
-class SourcererError(Exception):
-    """Base class for all sourcerer errors."""
+class ImmvokeError(Exception):
+    """Base class for all immvoke errors."""
     pass
 
 
-class HttpError(SourcererError):
+class HttpError(ImmvokeError):
     """A request failed after exhausting retries."""
     pass
 
 
-class ProbeIncompleteError(SourcererError):
+class ProbeIncompleteError(ImmvokeError):
     """
     A progressive range probe hit its byte cap without decoding what it needed.
 
@@ -30,7 +30,7 @@ class ProbeIncompleteError(SourcererError):
     pass
 
 
-class ParseError(SourcererError):
+class ParseError(ImmvokeError):
     """Remote content did not match the structure the code expects."""
     pass
 
@@ -50,11 +50,11 @@ class OgrdbParseError(ParseError):
     pass
 
 
-class SchemaError(SourcererError):
+class SchemaError(ImmvokeError):
     """A stored schema snapshot is missing, malformed or too new to understand."""
     pass
 
 
-class ConversionError(SourcererError):
+class ConversionError(ImmvokeError):
     """A data unit could not be converted."""
     pass

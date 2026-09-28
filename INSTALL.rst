@@ -1,13 +1,12 @@
 Installation
 ================================================================================
 
-``sourcerer`` is not yet published on PyPI (the name is already taken by an
-unrelated package). Until that is resolved, install directly from GitHub or
-from a local checkout.
+``immvoke`` is not yet published on PyPI. Until it is, install directly from
+GitHub or from a local checkout.
 
 The current development build can be installed using pip and git::
 
-    > pip3 install git+https://github.com/immcantation/sourcerer@master --user
+    > pip3 install git+https://github.com/immcantation/immvoke@master --user
 
 If you currently have a development version installed, then you will likely
 need to add the arguments ``--upgrade --no-deps --force-reinstall`` to the
@@ -15,8 +14,8 @@ pip3 command.
 
 To install from a local checkout instead::
 
-    > git clone https://github.com/immcantation/sourcerer
-    > cd sourcerer
+    > git clone https://github.com/immcantation/immvoke
+    > cd immvoke
     > pip3 install . --user
 
 For development, install in editable mode with the ``dev`` extra, which adds
@@ -41,9 +40,9 @@ install by hand.
 Optional
 --------------------------------------------------------------------------------
 
-``sourcerer`` itself has no dependency on Nextflow or Docker. They are only
+``immvoke`` itself has no dependency on Nextflow or Docker. They are only
 needed to run the ``nf-core/airrflow`` pipeline on the samplesheets
-``sourcerer`` writes:
+``immvoke`` writes:
 
 +  `Nextflow <https://www.nextflow.io>`__
 +  `Docker <https://www.docker.com>`__ or another Nextflow-supported container

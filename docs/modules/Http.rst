@@ -1,7 +1,7 @@
-sourcerer.Http
+immvoke.Http
 --------------
 
-.. automodule:: sourcerer.Http
+.. automodule:: immvoke.Http
     :members:
     :undoc-members:
     :show-inheritance:

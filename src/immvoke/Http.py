@@ -1,7 +1,7 @@
 """
 HTTP client
 
-Every network call in sourcerer goes through HttpClient. That single seam is what
+Every network call in immvoke goes through HttpClient. That single seam is what
 lets the test suite run with no network at all, and it is where politeness,
 retries, timeouts and download integrity are enforced once rather than at each
 call site.
@@ -25,9 +25,9 @@ from pathlib import Path
 import requests
 from tqdm import tqdm
 
-# Sourcerer imports
-from sourcerer.Exceptions import HttpError, ProbeIncompleteError
-from sourcerer.Version import __version__
+# Immvoke imports
+from immvoke.Exceptions import HttpError, ProbeIncompleteError
+from immvoke.Version import __version__
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ RETRY_STATUS = frozenset([429, 500, 502, 503, 504])
 #: Identify honestly. Spoofing a browser user agent is what gets an academic
 #: host to block you, and it is bad citizenship toward a group providing free
 #: data. See OASTools.py:65 for the anti-pattern this replaces.
-USER_AGENT = ('sourcerer/%s (+https://github.com/immcantation/sourcerer; '
+USER_AGENT = ('immvoke/%s (+https://github.com/immcantation/immvoke; '
               'immcantation@googlegroups.com)' % __version__)
 
 #: Read chunk size for streamed bodies.

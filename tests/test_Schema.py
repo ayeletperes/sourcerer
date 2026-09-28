@@ -10,9 +10,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Sourcerer imports
-from sourcerer.Exceptions import SchemaError
-from sourcerer.Schema import (
+# Immvoke imports
+from immvoke.Exceptions import SchemaError
+from immvoke.Schema import (
     SCHEMA_VERSION,
     Collection,
     Field,

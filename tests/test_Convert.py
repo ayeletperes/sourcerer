@@ -16,18 +16,18 @@ from pathlib import Path
 
 import pandas
 
-# Sourcerer imports
-from sourcerer import Convert
-from sourcerer.Exceptions import OasParseError
-from sourcerer.Gzip import decompressPrefix
-from sourcerer.Sources import Oas
+# Immvoke imports
+from immvoke import Convert
+from immvoke.Exceptions import OasParseError
+from immvoke.Gzip import decompressPrefix
+from immvoke.Sources import Oas
 
 try:
     import changeo.Receptor  # noqa: F401
     import presto.Annotation  # noqa: F401
     HAS_IMMCANTATION_TOOLS = True
 except ImportError:
-    # Neither is a dependency of sourcerer; they are the downstream consumers of
+    # Neither is a dependency of immvoke; they are the downstream consumers of
     # the FASTA headers, so the round trip is verified only where present.
     HAS_IMMCANTATION_TOOLS = False
 
@@ -314,11 +314,11 @@ class TestFieldMapping(unittest.TestCase):
         where a user needs the original to join back on.
         """
         plain, _, _ = convert(PAIRED_CSV)
-        self.assertEqual(set(plain['sourcerer_original_sequence_id']), {''})
+        self.assertEqual(set(plain['immvoke_original_sequence_id']), {''})
 
         prefixed, _, _ = convert(PAIRED_CSV, prefix_ids=True)
         self.assertTrue(
-            prefixed['sourcerer_original_sequence_id'].str.contains(
+            prefixed['immvoke_original_sequence_id'].str.contains(
                 '_contig_').all())
 
     def test_prefixing_namespaces_identifiers_for_merged_output(self):
@@ -339,7 +339,7 @@ class TestFieldMapping(unittest.TestCase):
 
     def test_unpaired_has_no_source_identifier(self):
         frame, _, _ = convert(UNPAIRED)
-        self.assertEqual(set(frame['sourcerer_original_sequence_id']), {''})
+        self.assertEqual(set(frame['immvoke_original_sequence_id']), {''})
         self.assertTrue(frame['sequence_id'].is_unique)
 
     def test_consumed_columns_are_dropped(self):
@@ -399,14 +399,14 @@ class TestAirrOutput(unittest.TestCase):
         frame = pandas.read_csv(out, sep='\t', dtype=str, na_filter=False)
 
         self.assertNotIn('ANARCI_status', frame.columns)
-        self.assertNotIn('sourcerer_unit_id', frame.columns)
+        self.assertNotIn('immvoke_unit_id', frame.columns)
 
     def test_extras_are_kept_by_default(self):
         out, _ = self.writeCase(PAIRED_CSV)
         frame = pandas.read_csv(out, sep='\t', dtype=str, na_filter=False)
 
-        self.assertIn('sourcerer_unit_id', frame.columns)
-        self.assertIn('sourcerer_row_hash', frame.columns)
+        self.assertIn('immvoke_unit_id', frame.columns)
+        self.assertIn('immvoke_row_hash', frame.columns)
 
 
 class TestFastaOutput(unittest.TestCase):

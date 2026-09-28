@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# sourcerer documentation build configuration file
+# immvoke documentation build configuration file
 #
 # This file is execfile()d with the current directory set to its
 # containing dir.
@@ -17,8 +17,8 @@ import os
 # it here forces plain text regardless of where the build is invoked from.
 os.environ.setdefault('NO_COLOR', '1')
 
-# Sourcerer imports
-import sourcerer.Version
+# Immvoke imports
+import immvoke.Version
 
 # -- General configuration ------------------------------------------------
 
@@ -45,7 +45,7 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-project = 'sourcerer'
+project = 'immvoke'
 copyright = 'Kleinstein Lab, Yale University, ' + str(datetime.datetime.now().year)
 
 # The version info for the project you're documenting, acts as replacement for
@@ -53,9 +53,9 @@ copyright = 'Kleinstein Lab, Yale University, ' + str(datetime.datetime.now().ye
 # built documents.
 #
 # The short X.Y version.
-version = sourcerer.Version.__version__
+version = immvoke.Version.__version__
 # The full version, including alpha/beta/rc tags.
-release = '%s-%s' % (sourcerer.Version.__version__, sourcerer.Version.__date__)
+release = '%s-%s' % (immvoke.Version.__version__, immvoke.Version.__date__)
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -87,13 +87,13 @@ html_static_path = ['_static']
 html_css_files = ['overrides.css']
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'sourcererdoc'
+htmlhelp_basename = 'immvokedoc'
 
 
 # -- Options for LaTeX output ---------------------------------------------
 
 latex_documents = [
-  ('index', 'sourcerer.tex', 'sourcerer Documentation',
+  ('index', 'immvoke.tex', 'immvoke Documentation',
    'Susanna Marquez', 'manual'),
 ]
 
@@ -101,7 +101,7 @@ latex_documents = [
 # -- Options for manual page output ---------------------------------------
 
 man_pages = [
-    ('index', 'sourcerer', 'sourcerer Documentation',
+    ('index', 'immvoke', 'immvoke Documentation',
      ['Susanna Marquez'], 1)
 ]
 
@@ -109,8 +109,8 @@ man_pages = [
 # -- Options for Texinfo output -------------------------------------------
 
 texinfo_documents = [
-  ('index', 'sourcerer', 'sourcerer Documentation',
-   'Susanna Marquez', 'sourcerer',
+  ('index', 'immvoke', 'immvoke Documentation',
+   'Susanna Marquez', 'immvoke',
    'Download data from online immune repertoire databases and format it for '
    'Immcantation.',
    'Miscellaneous'),

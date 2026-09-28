@@ -17,9 +17,9 @@ from unittest import mock
 
 import pandas
 
-# Sourcerer imports
-from sourcerer import Reference
-from sourcerer.Cli import (
+# Immvoke imports
+from immvoke import Reference
+from immvoke.Cli import (
     applyPins,
     getArgParser,
     handleDownload,
@@ -28,11 +28,11 @@ from sourcerer.Cli import (
     handleReferenceShow,
     loadMap,
 )
-from sourcerer.Exceptions import SourcererError
-from sourcerer.Sources.Base import DataUnit, DownloadResult, Query, SourceBase
-from sourcerer.Sources.Imgt import ImgtSource
-from sourcerer.Sources.Oas import OasSource, newReport
-from sourcerer.Sources.Ogrdb import OgrdbSource
+from immvoke.Exceptions import ImmvokeError
+from immvoke.Sources.Base import DataUnit, DownloadResult, Query, SourceBase
+from immvoke.Sources.Imgt import ImgtSource
+from immvoke.Sources.Oas import OasSource, newReport
+from immvoke.Sources.Ogrdb import OgrdbSource
 
 
 class TestArgParser(unittest.TestCase):
@@ -74,7 +74,7 @@ class TestArgParser(unittest.TestCase):
 
     def test_action_help_lists_the_collections(self):
         """
-        `sourcerer oas download --help` names the collections it accepts.
+        `immvoke oas download --help` names the collections it accepts.
 
         argparse only lists a subparser that was given a help string, so leaving
         it off left the positional section of every action's help empty and the
@@ -125,7 +125,7 @@ class TestArgParser(unittest.TestCase):
                     flag = '/'.join(action.option_strings) or action.dest
                     undocumented.append('%s %s' % (path, flag))
 
-        walk(getArgParser(), 'sourcerer')
+        walk(getArgParser(), 'immvoke')
 
         self.assertEqual(undocumented, [])
 
@@ -148,7 +148,7 @@ class TestArgParser(unittest.TestCase):
                     flag = '/'.join(action.option_strings) or action.dest
                     doubled.append('%s %s' % (path, flag))
 
-        walk(getArgParser(), 'sourcerer')
+        walk(getArgParser(), 'immvoke')
 
         self.assertEqual(doubled, [])
 
@@ -225,7 +225,7 @@ class TestHandleDownload(unittest.TestCase):
         args = getArgParser().parse_args(argv)
         args.source = 'oas'
 
-        with mock.patch('sourcerer.Cli.getSource', return_value=StubSource(None)):
+        with mock.patch('immvoke.Cli.getSource', return_value=StubSource(None)):
             return handleDownload(args)
 
     def test_converted_format_alone_still_records_the_raw_mirror(self):
@@ -316,13 +316,13 @@ class TestApplyPins(unittest.TestCase):
         """An IMGT-only reference gives an ogrdb source nothing, and says so."""
         with tempfile.TemporaryDirectory() as tmp:
             source = OgrdbSource(client=None)
-            with self.assertRaises(SourcererError):
+            with self.assertRaises(ImmvokeError):
                 applyPins(source, self.writePins(tmp, airrc=False), 'human')
 
     def test_a_folder_with_no_sidecars_is_an_error(self):
         """--from pointed at an ordinary folder fails rather than fetching latest."""
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(SourcererError):
+            with self.assertRaises(ImmvokeError):
                 applyPins(ImgtSource(client=None), Path(tmp), 'human')
 
 
@@ -362,7 +362,7 @@ class TestReferenceDiffCommand(unittest.TestCase):
         """A path that is not a folder fails rather than comparing nothing."""
         with tempfile.TemporaryDirectory() as tmp:
             a = makeReference(Path(tmp) / 'a')
-            with self.assertRaises(SourcererError):
+            with self.assertRaises(ImmvokeError):
                 self.run_diff(a, Path(tmp) / 'nope')
 
 
@@ -396,7 +396,7 @@ class TestLoadMap(unittest.TestCase):
 
     def test_a_missing_manifest_is_an_error(self):
         """A manifest that is not there fails rather than being ignored."""
-        with self.assertRaises(SourcererError):
+        with self.assertRaises(ImmvokeError):
             loadMap(mock.Mock(map_file=Path('/nonexistent/manifest.tsv')))
 
     def test_a_manifest_is_read(self):

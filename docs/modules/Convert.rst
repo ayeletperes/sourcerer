@@ -1,7 +1,7 @@
-sourcerer.Convert
+immvoke.Convert
 -----------------
 
-.. automodule:: sourcerer.Convert
+.. automodule:: immvoke.Convert
     :members:
     :undoc-members:
     :show-inheritance:

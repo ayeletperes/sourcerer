@@ -1,7 +1,7 @@
-sourcerer.Commandline
+immvoke.Commandline
 ---------------------
 
-.. automodule:: sourcerer.Commandline
+.. automodule:: immvoke.Commandline
     :members:
     :undoc-members:
     :show-inheritance:

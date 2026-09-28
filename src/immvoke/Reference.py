@@ -12,8 +12,8 @@ directory layouts airrflow consumes: a reference_base of per-chain FASTAs, and -
 only when asked, because it needs the BLAST+ binary -- an igblast_base of BLAST
 databases plus the internal_data and optional_file trees mirrored from NCBI. The
 base class germline sources extend, ReferenceSource, lives in
-sourcerer.Sources.Germline, kept there rather than here so this module never
-imports from sourcerer.Sources and the two stay free of an import cycle.
+immvoke.Sources.Germline, kept there rather than here so this module never
+imports from immvoke.Sources and the two stay free of an import cycle.
 
 The reference_base keeps the source's own FASTA verbatim, gaps and all, exactly
 as airrflow's bin/fetch_references.sh leaves it. Cleaning (gap removal, dedup)
@@ -40,8 +40,8 @@ from urllib.parse import urljoin, urlparse
 import yaml
 from bs4 import BeautifulSoup
 
-# Sourcerer imports
-from sourcerer.Exceptions import SourcererError
+# Immvoke imports
+from immvoke.Exceptions import ImmvokeError
 
 log = logging.getLogger(__name__)
 
@@ -392,7 +392,7 @@ def referenceFastaPath(reference_dir, prefix, species, kind, chain):
     return Path(reference_dir) / species / kind / name
 
 
-#: Filename extensions read as germline FASTA. A reference written by sourcerer
+#: Filename extensions read as germline FASTA. A reference written by immvoke
 #: is always .fasta, but a folder a user assembled themselves may not be, and a
 #: file the manifest names is no use if it is never looked at.
 FASTA_SUFFIXES = ('.fasta', '.fa', '.fna')
@@ -436,7 +436,7 @@ def loadReferenceMap(path):
     """
     Read a manifest declaring what each FASTA in a reference folder holds.
 
-    A reference someone assembled themselves rarely follows sourcerer's naming --
+    A reference someone assembled themselves rarely follows immvoke's naming --
     an OGRDB set downloaded as ``IGH_VDJ_V.fasta`` says nothing about species or
     chain that a filename rule could read. The manifest says it outright rather
     than guessing, because a chain inferred wrongly does not fail: it builds a
@@ -461,13 +461,13 @@ def loadReferenceMap(path):
       dict: file key to (species, chain, is_aa).
 
     Raises:
-      SourcererError: if the manifest is not there, or on an unreadable line, an
+      ImmvokeError: if the manifest is not there, or on an unreadable line, an
         unknown species or an unknown chain, none of which are worth silently
         skipping in a file whose whole purpose is to be explicit.
     """
     path = Path(path)
     if not path.is_file():
-        raise SourcererError('no such manifest: %s' % path)
+        raise ImmvokeError('no such manifest: %s' % path)
 
     mapping = {}
     for number, raw in enumerate(path.read_text().splitlines(), start=1):
@@ -478,15 +478,15 @@ def loadReferenceMap(path):
         fields = line.split('\t') if '\t' in line else line.split()
         fields = [f.strip() for f in fields if f.strip()]
         if len(fields) < 3:
-            raise SourcererError('%s line %d: expected at least file, species '
+            raise ImmvokeError('%s line %d: expected at least file, species '
                                  'and chain, got %r' % (path, number, line))
 
         name, species, chain = fields[0], fields[1], fields[2]
         if species not in SPECIES:
-            raise SourcererError('%s line %d: unknown species %r; known: %s'
+            raise ImmvokeError('%s line %d: unknown species %r; known: %s'
                                  % (path, number, species, ', '.join(SPECIES)))
         if chain not in KNOWN_CHAINS:
-            raise SourcererError('%s line %d: unknown chain %r; known: %s'
+            raise ImmvokeError('%s line %d: unknown chain %r; known: %s'
                                  % (path, number, chain,
                                     ', '.join(sorted(KNOWN_CHAINS))))
 
@@ -665,7 +665,7 @@ def _writeMetadata(path, record):
 #: user-supplied reference records what was built and where it came from, the
 #: same way a download records its release. Named apart from the source sidecars
 #: because it describes the build, not an upstream release.
-BUILD_METADATA = 'sourcerer_build.yaml'
+BUILD_METADATA = 'immvoke_build.yaml'
 
 
 def writeBuildMetadata(out_dir, report, source_dir, date, generated_by):
@@ -770,7 +770,7 @@ def loadReferencePins(path):
       dict: {'imgt': record or None, 'airrc': record or None}.
 
     Raises:
-      SourcererError: if nothing readable is found.
+      ImmvokeError: if nothing readable is found.
     """
     path = Path(path)
     pins = {'imgt': None, 'airrc': None}
@@ -792,7 +792,7 @@ def loadReferencePins(path):
             pins['imgt'] = record
 
     if pins['imgt'] is None and pins['airrc'] is None:
-        raise SourcererError('no IMGT.yaml or AIRRC.yaml found at %s; point '
+        raise ImmvokeError('no IMGT.yaml or AIRRC.yaml found at %s; point '
                              '--from at a reference_base or one of those files'
                              % path)
 
@@ -804,7 +804,7 @@ def describeReference(path, mapping=None):
     Render what a reference folder is and where it came from.
 
     The provenance sidecars are written so that a reference can be re-downloaded
-    and cited without sourcerer's help, but reading three YAML files by hand to
+    and cited without immvoke's help, but reading three YAML files by hand to
     answer "what is this folder" is friction enough that it does not get done.
     This is that answer: the release and sets it was built from, what was built,
     and what the folder actually holds.
@@ -820,11 +820,11 @@ def describeReference(path, mapping=None):
       str: the report.
 
     Raises:
-      SourcererError: if the folder does not exist.
+      ImmvokeError: if the folder does not exist.
     """
     path = Path(path)
     if not path.is_dir():
-        raise SourcererError('no such reference folder: %s' % path)
+        raise ImmvokeError('no such reference folder: %s' % path)
 
     root = path / 'reference_base' if (path / 'reference_base').is_dir() else path
     lines = ['reference: %s' % root]
@@ -847,7 +847,7 @@ def describeReference(path, mapping=None):
     if not found:
         lines.append('')
         lines.append('no provenance sidecars; this folder was not written by a '
-                     'sourcerer download or build')
+                     'immvoke download or build')
 
     files, unrecognized = discoverReference(root, mapping=mapping)
     lines.append('')
@@ -1035,10 +1035,10 @@ def runMakeblastdb(fasta, out_base, dbtype):
       dbtype (str): 'nucl' or 'prot'.
 
     Raises:
-      SourcererError: if makeblastdb is not on PATH or exits non-zero.
+      ImmvokeError: if makeblastdb is not on PATH or exits non-zero.
     """
     if shutil.which('makeblastdb') is None:
-        raise SourcererError(
+        raise ImmvokeError(
             'makeblastdb not found on PATH; install NCBI BLAST+ (for example '
             'conda install -c bioconda blast) or drop --igblast to write only '
             'the reference FASTAs')
@@ -1048,7 +1048,7 @@ def runMakeblastdb(fasta, out_base, dbtype):
          '-in', str(fasta), '-out', str(out_base)],
         capture_output=True, text=True)
     if result.returncode != 0:
-        raise SourcererError('makeblastdb failed for %s: %s'
+        raise ImmvokeError('makeblastdb failed for %s: %s'
                              % (Path(fasta).name, result.stderr.strip()))
 
 
@@ -1148,7 +1148,7 @@ def buildIgblastBase(reference_dir, out_dir, client, species=None, mapping=None)
       ReferenceReport: what was built and what was skipped.
 
     Raises:
-      SourcererError: if makeblastdb is unavailable.
+      ImmvokeError: if makeblastdb is unavailable.
     """
     plan = planReference(reference_dir, species=species, mapping=mapping)
     if plan.unrecognized:
@@ -1196,7 +1196,7 @@ def checkAuxCoverage(out_dir, plan):
     call them ``IGKJ0-4JXG*00`` -- is not covered, and nothing else would say so.
 
     The remedy is to build an auxiliary file from the reference itself and pass
-    it to igblastn with ``-auxiliary_data``. Sourcerer does not build one: that
+    it to igblastn with ``-auxiliary_data``. Immvoke does not build one: that
     belongs with the pipeline that runs IgBLAST. Reporting the gap is what it can
     usefully do, so the names needing rows are known rather than guessed at.
 
@@ -1240,7 +1240,7 @@ def buildFromPlan(plan, out_dir, client):
       ReferenceReport: what was built and what was skipped.
 
     Raises:
-      SourcererError: if makeblastdb is unavailable.
+      ImmvokeError: if makeblastdb is unavailable.
     """
     out_dir = Path(out_dir)
     fasta_out = out_dir / 'fasta'
@@ -1358,13 +1358,13 @@ def extractTar(archive, dest_dir):
       dest_dir (Path): where to extract it.
 
     Raises:
-      SourcererError: if a member path points outside dest_dir.
+      ImmvokeError: if a member path points outside dest_dir.
     """
     dest_dir = Path(dest_dir).resolve()
     with tarfile.open(archive) as tar:
         for member in tar.getmembers():
             target = (dest_dir / member.name).resolve()
             if target != dest_dir and dest_dir not in target.parents:
-                raise SourcererError('unsafe path %s in %s'
+                raise ImmvokeError('unsafe path %s in %s'
                                      % (member.name, Path(archive).name))
         tar.extractall(dest_dir)

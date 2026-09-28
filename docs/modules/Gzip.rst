@@ -1,7 +1,7 @@
-sourcerer.Gzip
+immvoke.Gzip
 --------------
 
-.. automodule:: sourcerer.Gzip
+.. automodule:: immvoke.Gzip
     :members:
     :undoc-members:
     :show-inheritance:

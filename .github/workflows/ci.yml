@@ -68,7 +68,7 @@ jobs:
           /tmp/clean/bin/pip install dist/*.whl
       - name: Run from outside the source tree
         working-directory: /tmp
-        run: /tmp/clean/bin/sourcerer --version
+        run: /tmp/clean/bin/immvoke --version
 
   lint:
     runs-on: ubuntu-latest
@@ -83,7 +83,7 @@ jobs:
         run: ruff check .
 
   # Builds with -W so that a broken cross-reference, or autoprogram failing to
-  # import sourcerer.Cli:getArgParser(), fails CI instead of only showing up
+  # import immvoke.Cli:getArgParser(), fails CI instead of only showing up
   # once the docs are published.
   docs:
     runs-on: ubuntu-latest

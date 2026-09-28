@@ -1,6 +1,6 @@
 .. _UsageAirrcImgt:
 
-sourcerer airrc-imgt
+immvoke airrc-imgt
 ================================================================================
 
 The AIRR-C germline sets blended with IMGT: immunoglobulin V, D and J from
@@ -11,11 +11,11 @@ the immunoglobulin constants without a published set -- from IMGT. Offers
 additionally builds the IgBLAST databases.
 
 Downloading ``all`` instead of a single species fetches every species
-**sourcerer supports** into one ``reference_base``, described by one
+**immvoke supports** into one ``reference_base``, described by one
 ``IMGT.yaml`` and one ``AIRRC.yaml``. That is not every species the source
-publishes: sourcerer covers human and mouse, while OGRDB also carries rhesus
+publishes: immvoke covers human and mouse, while OGRDB also carries rhesus
 macaque, deer mouse and rainbow trout, and IMGT many more.
 
-.. autoprogram:: sourcerer.Cli:getArgParser()
-   :prog: sourcerer
+.. autoprogram:: immvoke.Cli:getArgParser()
+   :prog: immvoke
    :start_command: airrc-imgt

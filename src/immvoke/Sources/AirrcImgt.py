@@ -22,12 +22,12 @@ __author__ = 'Ayelet Peres'
 import logging
 from datetime import UTC
 
-# Sourcerer imports
-from sourcerer.Reference import KIND_AA, KIND_CONSTANT, ReferenceReport
-from sourcerer.Sources.Base import Query
-from sourcerer.Sources.Germline import ReferenceSource
-from sourcerer.Sources.Imgt import ImgtSource, chainPlan
-from sourcerer.Sources.Ogrdb import OgrdbSource
+# Immvoke imports
+from immvoke.Reference import KIND_AA, KIND_CONSTANT, ReferenceReport
+from immvoke.Sources.Base import Query
+from immvoke.Sources.Germline import ReferenceSource
+from immvoke.Sources.Imgt import ImgtSource, chainPlan
+from immvoke.Sources.Ogrdb import OgrdbSource
 
 log = logging.getLogger(__name__)
 
@@ -81,13 +81,13 @@ class AirrcImgtSource(ReferenceSource):
         """
         from datetime import datetime
 
-        from sourcerer.Schema import Collection, SourceSchema
-        from sourcerer.Version import __version__
+        from immvoke.Schema import Collection, SourceSchema
+        from immvoke.Version import __version__
 
         return SourceSchema(
             source=self.name,
             harvested=datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            harvested_by='sourcerer %s' % __version__,
+            harvested_by='immvoke %s' % __version__,
             source_urls={'ogrdb': self._ogrdb.name, 'imgt': self._imgt.name},
             collections={sp: Collection(name=sp) for sp in self.collections})
 

@@ -1,7 +1,7 @@
-sourcerer.Sources.Imgt
+immvoke.Sources.Imgt
 ----------------------
 
-.. automodule:: sourcerer.Sources.Imgt
+.. automodule:: immvoke.Sources.Imgt
     :members:
     :undoc-members:
     :show-inheritance:

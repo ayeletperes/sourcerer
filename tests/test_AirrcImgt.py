@@ -11,9 +11,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Sourcerer imports
-from sourcerer.Sources.AirrcImgt import AirrcImgtSource
-from sourcerer.Sources.Base import DataUnit, Query
+# Immvoke imports
+from immvoke.Sources.AirrcImgt import AirrcImgtSource
+from immvoke.Sources.Base import DataUnit, Query
 from tests.test_ogrdb import StubClient
 
 test_path = os.path.dirname(os.path.realpath(__file__))

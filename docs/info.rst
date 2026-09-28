@@ -4,7 +4,7 @@ Contact
 If you need help or have any questions, please contact the `Immcantation Group <mailto:immcantation@googlegroups.com>`__.
 
 If you have discovered a bug or have a feature request, you can open an issue using the
-`issue tracker <http://github.com/immcantation/sourcerer/issues>`__.
+`issue tracker <http://github.com/immcantation/immvoke/issues>`__.
 
 To receive alerts about Immcantation releases, news, events, and tutorials, join the `Immcantation News <https://groups.google.com/g/immcantation-news>`__ Google Group. `Membership settings <https://groups.google.com/g/immcantation-news/membership>`__ can be adjusted to change the frequency of email updates.
 
@@ -12,10 +12,10 @@ To receive alerts about Immcantation releases, news, events, and tutorials, join
 Citing downloaded data
 --------------------------------------------------------------------------------
 
-``sourcerer``'s own license (below) covers the tool, not the data it downloads.
+``immvoke``'s own license (below) covers the tool, not the data it downloads.
 Each remote source distributes its data under its own license and asks to be
-cited in its own way; downloading through ``sourcerer`` does not change either
-obligation. Run ``sourcerer sources list`` to print the license and citation
+cited in its own way; downloading through ``immvoke`` does not change either
+obligation. Run ``immvoke sources list`` to print the license and citation
 for every source, and check ``data_license`` / ``data_citation`` in the
 ``download_metadata.yml`` written alongside a download for the record tied to
 that specific dataset.
@@ -69,5 +69,5 @@ License
 
 This work is licensed under the
 `GNU Affero General Public License Version 3 (AGPL-3) <https://www.gnu.org/licenses/agpl-3.0.en.html>`__.
-This covers the ``sourcerer`` codebase; data downloaded through it carries the
+This covers the ``immvoke`` codebase; data downloaded through it carries the
 source's own license, see `Citing downloaded data`_ above.

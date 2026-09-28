@@ -12,15 +12,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Sourcerer imports
-from sourcerer.Airrflow import (
+# Immvoke imports
+from immvoke.Airrflow import (
     SAMPLESHEET_COLUMNS,
     buildSamplesheet,
     loadSamplesheet,
     targetLocus,
 )
-from sourcerer.Exceptions import SourcererError
-from sourcerer.Sources.Base import DataUnit
+from immvoke.Exceptions import ImmvokeError
+from immvoke.Sources.Base import DataUnit
 
 
 def makeUnit(unit_id, **metadata):
@@ -143,7 +143,7 @@ class TestSamplesheetMerge(unittest.TestCase):
 
     def test_refuses_to_overwrite_a_foreign_file(self):
         """
-        A file that is not a sourcerer samplesheet is never rewritten.
+        A file that is not a immvoke samplesheet is never rewritten.
 
         Merging depends on the column layout, and a hand-built samplesheet that
         happens to occupy the expected path represents work that cannot be
@@ -151,7 +151,7 @@ class TestSamplesheetMerge(unittest.TestCase):
         """
         self.sheet.write_text('sample\tfile\nfoo\tbar.fasta\n')
 
-        with self.assertRaises(SourcererError):
+        with self.assertRaises(ImmvokeError):
             self.write([makeUnit('A_2020/csv/a.csv.gz')])
 
     def test_missing_file_loads_as_empty(self):

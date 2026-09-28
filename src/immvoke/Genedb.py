@@ -24,8 +24,8 @@ __author__ = 'Ayelet Peres'
 import logging
 from urllib.parse import quote
 
-# Sourcerer imports
-from sourcerer.Reference import (
+# Immvoke imports
+from immvoke.Reference import (
     KIND_AA,
     KIND_CONSTANT,
     KIND_VDJ,

@@ -11,10 +11,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Sourcerer imports
-from sourcerer.Exceptions import ImgtParseError
-from sourcerer.Sources.Base import DataUnit, Query
-from sourcerer.Sources.Imgt import (
+# Immvoke imports
+from immvoke.Exceptions import ImgtParseError
+from immvoke.Sources.Base import DataUnit, Query
+from immvoke.Sources.Imgt import (
     ImgtSource,
     buildQueryUrl,
     extractFasta,

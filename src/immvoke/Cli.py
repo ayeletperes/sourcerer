@@ -1,5 +1,5 @@
 """
-sourcerer commandline interface
+immvoke commandline interface
 
 Download data from online immune repertoire databases and format it for
 Immcantation.
@@ -14,22 +14,22 @@ import sys
 from argparse import ArgumentParser
 from pathlib import Path
 
-# Sourcerer imports
-from sourcerer import Catalog, Convert, Provenance, Reference
-from sourcerer.Airrflow import buildSamplesheet
-from sourcerer.Commandline import CommonHelpFormatter, setupLogging
-from sourcerer.Exceptions import SourcererError
-from sourcerer.Http import HttpClient
-from sourcerer.Schema import loadSchema, saveSchema
-from sourcerer.Sources import ALIASES, REGISTRY, canonicalName, getSource
-from sourcerer.Version import __date__, __version__
+# Immvoke imports
+from immvoke import Catalog, Convert, Provenance, Reference
+from immvoke.Airrflow import buildSamplesheet
+from immvoke.Commandline import CommonHelpFormatter, setupLogging
+from immvoke.Exceptions import ImmvokeError
+from immvoke.Http import HttpClient
+from immvoke.Schema import loadSchema, saveSchema
+from immvoke.Sources import ALIASES, REGISTRY, canonicalName, getSource
+from immvoke.Version import __date__, __version__
 
-log = logging.getLogger('sourcerer')
+log = logging.getLogger('immvoke')
 
 #: Output formats the download and convert subcommands can produce.
 FORMATS = ('raw', 'airr', 'fasta')
 
-#: Pseudo-collection for germline sources: fetch every species sourcerer supports
+#: Pseudo-collection for germline sources: fetch every species immvoke supports
 #: into one reference_base. Not offered for OAS (its collections are paired and
 #: unpaired, not species) nor for search (two species would merge two hit lists).
 ALL_SPECIES = 'all'
@@ -46,7 +46,7 @@ def loadSchemaQuietly(name):
     Load a packaged snapshot, returning None instead of raising.
 
     Parser construction must work on a checkout that has no snapshot yet,
-    otherwise `sourcerer schema refresh` could never be run to create one.
+    otherwise `immvoke schema refresh` could never be run to create one.
 
     Arguments:
       name (str): the source name.
@@ -85,10 +85,10 @@ def addFilterArgs(parser, schema, source, collection):
             summary = '%d values: %s' % (len(item.values), ', '.join(item.values))
         else:
             # Overflow only: today's fields (species, disease, ...) all stay well
-            # under the cap. Once `sourcerer build` (the interactive command
+            # under the cap. Once `immvoke build` (the interactive command
             # builder, see plan phase 6) exists, point there instead.
             shown = ', '.join(item.values[:VALUE_LIST_CAP])
-            summary = ('%d values, e.g. %s, ... run `sourcerer schema show '
+            summary = ('%d values, e.g. %s, ... run `immvoke schema show '
                        '--source %s --collection %s --field %s` for the full list'
                        % (len(item.values), shown, source, collection, item.name))
 
@@ -121,7 +121,7 @@ def getArgParser():
     Returns:
       argparse.ArgumentParser: the top level parser.
     """
-    parser = ArgumentParser(prog='sourcerer', description=__doc__,
+    parser = ArgumentParser(prog='immvoke', description=__doc__,
                             formatter_class=CommonHelpFormatter)
     # NB: %(prog)s is expanded by argparse, so it must not be part of the string
     # being %-formatted here.
@@ -139,12 +139,12 @@ def getArgParser():
 
     sources = commands.add_parser(
         'sources', help='list available sources',
-        description='List every data source sourcerer knows how to fetch '
+        description='List every data source immvoke knows how to fetch '
                     'from, along with a one-line description and its homepage.',
         formatter_class=CommonHelpFormatter)
     sources.add_subparsers(dest='action', metavar='').add_parser(
-        'list', help='list the sources sourcerer knows about',
-        description='List every data source sourcerer knows how to fetch '
+        'list', help='list the sources immvoke knows about',
+        description='List every data source immvoke knows how to fetch '
                     'from, along with a one-line description and its homepage.',
         formatter_class=CommonHelpFormatter)
 
@@ -216,7 +216,7 @@ def _addReferenceParser(commands):
     show = actions.add_parser(
         'show', help='report what a reference folder is and where it came from',
         description='Read a reference folder\'s provenance sidecars -- '
-                    'IMGT.yaml, AIRRC.yaml and sourcerer_build.yaml -- and '
+                    'IMGT.yaml, AIRRC.yaml and immvoke_build.yaml -- and '
                     'report the release and sets it was built from, what was '
                     'built, and what the folder holds. Accepts a reference_base, '
                     'a directory containing one, or an igblast_base, which '
@@ -323,7 +323,7 @@ def _addSourceParser(commands, name, source):
             # Passing help is what makes argparse list the collection at all.
             collection_help = source.collection_help.get(
                 collection,
-                'every species sourcerer supports for this source (%s), into '
+                'every species immvoke supports for this source (%s), into '
                 'one reference_base. Not every species the source publishes'
                 % ', '.join(source.collections))
             leaf = collections.add_parser(
@@ -439,7 +439,7 @@ def handleSchemaShow(args):
 
     item = collection.getField(args.field)
     if item is None:
-        raise SourcererError("no field '%s' in %s %s"
+        raise ImmvokeError("no field '%s' in %s %s"
                              % (args.field, args.source, args.collection))
     for value in item.values:
         print(value)
@@ -459,7 +459,7 @@ def handleSchemaRefresh(args):
     out = args.out
     if out is None:
         from importlib import resources
-        out = Path(str(resources.files('sourcerer').joinpath(
+        out = Path(str(resources.files('immvoke').joinpath(
             'data/schemas', args.source)))
 
     written, changed = saveSchema(schema, out)
@@ -537,7 +537,7 @@ def handleReferenceDiff(args):
     """Compare two reference folders and report; non-zero exit if they differ."""
     for folder in (args.reference_a, args.reference_b):
         if not folder.is_dir():
-            raise SourcererError('no such reference folder: %s' % folder)
+            raise ImmvokeError('no such reference folder: %s' % folder)
 
     diff = Reference.diffReference(args.reference_a, args.reference_b,
                                    species=args.species, mapping=loadMap(args))
@@ -561,27 +561,27 @@ def handleReference(args):
         return handleReferenceShow(args)
 
     if not args.folder.is_dir():
-        raise SourcererError('no such reference folder: %s' % args.folder)
+        raise ImmvokeError('no such reference folder: %s' % args.folder)
 
     plan = Reference.planReference(args.folder, species=args.species,
                                    mapping=loadMap(args))
     print(plan.summary())
 
     if not plan.ok:
-        raise SourcererError('no databases can be built from %s; check the file '
+        raise ImmvokeError('no databases can be built from %s; check the file '
                              'names against <species>_<CHAIN>.fasta' % args.folder)
 
     if args.check:
         return 0
 
     if args.out is None:
-        raise SourcererError('--out is required to build; pass --check to only '
+        raise ImmvokeError('--out is required to build; pass --check to only '
                              'validate the folder')
 
     report = Reference.buildFromPlan(plan, args.out, HttpClient(delay=MIRROR_DELAY))
     for path in Reference.writeBuildMetadata(
             args.out, report, args.folder, Provenance.timestamp()[:10],
-            'sourcerer %s' % __version__):
+            'immvoke %s' % __version__):
         log.info('wrote %s', path)
     log.info('wrote %s', args.out)
 
@@ -607,7 +607,7 @@ def applyPins(source, from_ref, species):
       from_ref (Path): a reference_base or an IMGT.yaml/AIRRC.yaml file.
       species (str): the species being downloaded.
     """
-    from sourcerer.Sources.Germline import ReferenceSource
+    from immvoke.Sources.Germline import ReferenceSource
 
     pins = Reference.loadReferencePins(from_ref)
     imgt, airrc = pins.get('imgt') or {}, pins.get('airrc') or {}
@@ -626,7 +626,7 @@ def applyPins(source, from_ref, species):
         applied.append('%d OGRDB set version(s)' % len(sets))
 
     if not applied:
-        raise SourcererError('the reference at %s records no %s versions that %s '
+        raise ImmvokeError('the reference at %s records no %s versions that %s '
                              'can re-download' % (from_ref, species, source.name))
     log.info('re-downloading pinned: %s', '; '.join(applied))
 
@@ -680,7 +680,7 @@ def handleReferenceDownload(args, source):
                                             species=species)
         Reference.writeBuildMetadata(igblast_out, report, reference_dir,
                                      Provenance.timestamp()[:10],
-                                     'sourcerer %s' % __version__)
+                                     'immvoke %s' % __version__)
         log.info('wrote %s', igblast_out)
         formats.append('igblast')
 
@@ -692,7 +692,7 @@ def handleReferenceDownload(args, source):
 
     if args.compare is not None:
         if not args.compare.is_dir():
-            raise SourcererError('no such reference folder: %s' % args.compare)
+            raise ImmvokeError('no such reference folder: %s' % args.compare)
         diff = Reference.diffReference(args.compare, reference_dir,
                                        species=species)
         print(diff.summary())
@@ -833,7 +833,7 @@ def main():
 
         parser.print_help(sys.stderr)
         return 1
-    except SourcererError as error:
+    except ImmvokeError as error:
         log.error('%s', error)
         return 1
 

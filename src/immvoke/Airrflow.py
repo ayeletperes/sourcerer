@@ -24,13 +24,13 @@ import csv
 import logging
 from pathlib import Path
 
-# Sourcerer imports
-from sourcerer.Exceptions import SourcererError
-from sourcerer.Sources.Oas import isNull
+# Immvoke imports
+from immvoke.Exceptions import ImmvokeError
+from immvoke.Sources.Oas import isNull
 
 log = logging.getLogger(__name__)
 
-#: Columns airrflow expects, in order. sample_name is added by sourcerer so that
+#: Columns airrflow expects, in order. sample_name is added by immvoke so that
 #: the original identifier survives the rewrite of sample_id.
 SAMPLESHEET_COLUMNS = ('sample_id', 'filename', 'subject_id', 'species',
                        'pcr_target_locus', 'tissue', 'sex', 'age',
@@ -112,7 +112,7 @@ def clean(value, default=''):
 
 def loadSamplesheet(path):
     """
-    Read a samplesheet sourcerer wrote earlier.
+    Read a samplesheet immvoke wrote earlier.
 
     A file whose header is not the one written here is not something this code
     may rewrite, so it raises rather than merging into it. Overwriting a
@@ -126,7 +126,7 @@ def loadSamplesheet(path):
       list: rows in file order, empty if the file does not exist.
 
     Raises:
-      SourcererError: if the file exists but was not written by sourcerer.
+      ImmvokeError: if the file exists but was not written by immvoke.
     """
     path = Path(path)
     if not path.exists():
@@ -136,8 +136,8 @@ def loadSamplesheet(path):
         reader = csv.DictReader(handle, delimiter='\t')
         fields = reader.fieldnames or []
         if list(fields) != list(SAMPLESHEET_COLUMNS):
-            raise SourcererError(
-                '%s does not look like a sourcerer samplesheet (expected columns '
+            raise ImmvokeError(
+                '%s does not look like a immvoke samplesheet (expected columns '
                 '%s), refusing to overwrite it'
                 % (path, ', '.join(SAMPLESHEET_COLUMNS)))
 

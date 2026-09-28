@@ -105,7 +105,7 @@ class SourceBase(ABC):
     #: OGRDB. They share the source's subcommand, flags and schema; the canonical
     #: ``name`` is what schema and provenance are keyed on.
     aliases = ()
-    #: One line description for `sourcerer sources list`.
+    #: One line description for `immvoke sources list`.
     description = ''
     #: Where a human can read about the source.
     homepage = ''
@@ -114,11 +114,11 @@ class SourceBase(ABC):
     #: Collection name to one line description, shown in `--help`.
     collection_help = {}
     #: License the source distributes its data under, e.g. 'CC BY 4.0'.
-    #: Shown in `sourcerer sources list` and recorded in download provenance,
+    #: Shown in `immvoke sources list` and recorded in download provenance,
     #: since it is what governs how downloaded data may be reused.
     license = ''
     #: How to cite this source, one string per paper, oldest first. Shown in
-    #: `sourcerer sources list` and recorded in download provenance, so that
+    #: `immvoke sources list` and recorded in download provenance, so that
     #: the record of what was downloaded travels with a reminder of how to
     #: give the source credit for it.
     citation = ()
@@ -126,7 +126,7 @@ class SourceBase(ABC):
     #: drives. 'dataset' sources are repertoires: they convert to AIRR/FASTA and
     #: write an airrflow samplesheet. 'reference' sources are germline sets: they
     #: build an airrflow germline reference_base instead, and never touch the
-    #: rearrangement conversion path. See sourcerer.Reference.ReferenceSource.
+    #: rearrangement conversion path. See immvoke.Reference.ReferenceSource.
     output = 'dataset'
 
     def __init__(self, client, schema=None):
@@ -142,7 +142,7 @@ class SourceBase(ABC):
     def schema(self):
         """SourceSchema: the stored snapshot, loaded lazily."""
         if self._schema is None:
-            from sourcerer.Schema import loadSchema
+            from immvoke.Schema import loadSchema
             self._schema = loadSchema(self.name)
 
         return self._schema
@@ -263,7 +263,7 @@ class SourceBase(ABC):
           tuple: (metadata, generator of normalized chunks, report dict). The
           report is filled in as the generator is consumed.
         """
-        from sourcerer.Sources.Oas import newReport
+        from immvoke.Sources.Oas import newReport
 
         metadata, chunks = self.readUnit(path, unit)
         report = newReport()

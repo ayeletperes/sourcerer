@@ -1,7 +1,7 @@
-sourcerer.Exceptions
+immvoke.Exceptions
 --------------------
 
-.. automodule:: sourcerer.Exceptions
+.. automodule:: immvoke.Exceptions
     :members:
     :undoc-members:
     :show-inheritance:

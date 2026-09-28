@@ -1,7 +1,7 @@
-sourcerer.Schema
+immvoke.Schema
 ----------------
 
-.. automodule:: sourcerer.Schema
+.. automodule:: immvoke.Schema
     :members:
     :undoc-members:
     :show-inheritance:

@@ -3,7 +3,7 @@
 Commandline Usage
 ================================================================================
 
-``sourcerer`` is a single command with a subcommand tree: one subcommand per
+``immvoke`` is a single command with a subcommand tree: one subcommand per
 external source (``oas``, ``imgt``, ``ogrdb`` and ``airrc-imgt`` today), a
 ``schema`` subcommand
 to inspect and re-harvest the stored snapshot each source is built from, a

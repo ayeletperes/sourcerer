@@ -12,10 +12,10 @@ from pathlib import Path
 
 import yaml
 
-# Sourcerer imports
-from sourcerer import Provenance
-from sourcerer.Exceptions import SourcererError
-from sourcerer.Sources.Base import DataUnit, DownloadResult
+# Immvoke imports
+from immvoke import Provenance
+from immvoke.Exceptions import ImmvokeError
+from immvoke.Sources.Base import DataUnit, DownloadResult
 
 
 def makeUnit(unit_id='study/a.csv.gz'):
@@ -149,11 +149,11 @@ class TestMerge(unittest.TestCase):
         self.write([Provenance.buildUnitRecord(unit, result, self.out)], ['raw'])
 
         text = (self.out / Provenance.DOWNLOAD_METADATA).read_text()
-        self.assertTrue(text.startswith('sourcerer_metadata_version:'))
+        self.assertTrue(text.startswith('immvoke_metadata_version:'))
 
     def test_a_foreign_file_is_not_overwritten(self):
         """
-        A file sourcerer did not write is never rewritten.
+        A file immvoke did not write is never rewritten.
 
         The name is a plausible one for a user to have chosen themselves, and
         clobbering hand-written provenance would destroy work that cannot be
@@ -163,7 +163,7 @@ class TestMerge(unittest.TestCase):
         path.write_text('notes: downloaded these by hand\n')
 
         unit, result = makeUnit()
-        with self.assertRaises(SourcererError):
+        with self.assertRaises(ImmvokeError):
             self.write([Provenance.buildUnitRecord(unit, result, self.out)],
                        ['raw'])
 

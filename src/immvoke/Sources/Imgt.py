@@ -12,7 +12,7 @@ One germline file per (species, chain) is fetched, matching how airrflow's
 bin/fetch_references.sh drives GENElect: query 7.14 for V, D and J nucleotide,
 14.1 for constant (7.5 for the mouse kappa and lambda constants, which 14.1 does
 not serve), and 7.3 for the translated V. The files are written into the
-reference_base with their IMGT headers and gaps intact; see sourcerer.Reference
+reference_base with their IMGT headers and gaps intact; see immvoke.Reference
 for why cleaning is deferred to the database build.
 """
 
@@ -26,19 +26,19 @@ from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
-# Sourcerer imports
-from sourcerer import Genedb, Reference
-from sourcerer.Exceptions import ImgtParseError
-from sourcerer.Reference import (
+# Immvoke imports
+from immvoke import Genedb, Reference
+from immvoke.Exceptions import ImgtParseError
+from immvoke.Reference import (
     KIND_AA,
     KIND_CONSTANT,
     KIND_VDJ,
     ReferenceReport,
     parseFasta,
 )
-from sourcerer.Sources.Base import DataUnit
-from sourcerer.Sources.Germline import ReferenceSource
-from sourcerer.Version import __version__
+from immvoke.Sources.Base import DataUnit
+from immvoke.Sources.Germline import ReferenceSource
+from immvoke.Version import __version__
 
 log = logging.getLogger(__name__)
 
@@ -231,8 +231,8 @@ class ImgtSource(ReferenceSource):
         """
         from datetime import datetime
 
-        from sourcerer.Schema import Collection, Field, SourceSchema
-        from sourcerer.Version import __version__
+        from immvoke.Schema import Collection, Field, SourceSchema
+        from immvoke.Version import __version__
 
         # A liveness check, not stored: the release tag changes with every IMGT
         # build, and keeping it in the snapshot would make a monthly refresh
@@ -247,7 +247,7 @@ class ImgtSource(ReferenceSource):
         return SourceSchema(
             source=self.name,
             harvested=datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            harvested_by='sourcerer %s' % __version__,
+            harvested_by='immvoke %s' % __version__,
             source_urls={'genelect': GENELECT, 'release': RELEASE_URL},
             parse_contracts={'fasta_block': 'second <pre> element',
                              'header': 'pipe-delimited, allele in field 2'},
@@ -423,7 +423,7 @@ class ImgtSource(ReferenceSource):
         release = self._resolved or self.fetchRelease()
         path = Reference.writeImgtMetadata(
             reference_dir, species, release,
-            datetime.now(UTC).strftime('%Y-%m-%d'), 'sourcerer %s' % __version__,
+            datetime.now(UTC).strftime('%Y-%m-%d'), 'immvoke %s' % __version__,
             requested=self.release, exact=self._exact)
 
         return [path]

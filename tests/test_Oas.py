@@ -11,9 +11,9 @@ import gzip
 import os
 import unittest
 
-# Sourcerer imports
-from sourcerer.Exceptions import OasParseError
-from sourcerer.Sources import Oas
+# Immvoke imports
+from immvoke.Exceptions import OasParseError
+from immvoke.Sources import Oas
 
 test_path = os.path.dirname(os.path.realpath(__file__))
 data_path = os.path.join(test_path, 'data')

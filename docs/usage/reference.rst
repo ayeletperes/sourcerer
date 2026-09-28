@@ -1,10 +1,10 @@
 .. _UsageReference:
 
-sourcerer reference
+immvoke reference
 ================================================================================
 
 Validate a folder of germline FASTAs and build the IgBLAST databases from it,
-for a reference someone supplies rather than one sourcerer downloaded. Files are
+for a reference someone supplies rather than one immvoke downloaded. Files are
 recognised by name in any directory layout --
 ``[<prefix>_][aa_]<species>_<CHAIN>.fasta``, for example ``human_IGHV.fasta`` or
 ``imgt_human_IGHV.fasta`` -- so a nested ``reference_base`` and a flat folder both
@@ -38,17 +38,17 @@ novel allele names get near the limit.
 A build also reports any J allele the mirrored NCBI auxiliary file does not
 name. IgBLAST looks a J germline up in that file by name, so an allele it does
 not list gets no CDR3 and no productivity call without any error. The names are
-recorded under ``aux_not_covered`` in ``sourcerer_build.yaml``.
+recorded under ``aux_not_covered`` in ``immvoke_build.yaml``.
 
 Where that happens, build an auxiliary file from the reference itself and pass it
-to ``igblastn`` with ``-auxiliary_data``. Sourcerer does not build one -- that
+to ``igblastn`` with ``-auxiliary_data``. Immvoke does not build one -- that
 belongs with the pipeline running IgBLAST -- but it names the alleles that need
 rows, so the file can be built for exactly those.
 
-``sourcerer reference show`` reports what a folder is and where it came from,
-reading the ``IMGT.yaml``, ``AIRRC.yaml`` and ``sourcerer_build.yaml`` sidecars
+``immvoke reference show`` reports what a folder is and where it came from,
+reading the ``IMGT.yaml``, ``AIRRC.yaml`` and ``immvoke_build.yaml`` sidecars
 a download or build leaves behind.
 
-.. autoprogram:: sourcerer.Cli:getArgParser()
-   :prog: sourcerer
+.. autoprogram:: immvoke.Cli:getArgParser()
+   :prog: immvoke
    :start_command: reference

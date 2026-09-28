@@ -11,8 +11,8 @@ import re
 import tomllib
 import unittest
 
-# Sourcerer imports
-import sourcerer
+# Immvoke imports
+import immvoke
 
 test_path = os.path.dirname(os.path.realpath(__file__))
 repo_path = os.path.dirname(test_path)
@@ -78,7 +78,7 @@ class TestVersion(unittest.TestCase):
 
     def test_version_is_exposed(self):
         """The package exposes a PEP 440 style version."""
-        self.assertRegex(sourcerer.__version__, r'^\d+\.\d+\.\d+')
+        self.assertRegex(immvoke.__version__, r'^\d+\.\d+\.\d+')
 
     def test_hatch_reads_version_file(self):
         """Hatchling sources the version from Version.py, not a duplicate literal."""
@@ -86,7 +86,7 @@ class TestVersion(unittest.TestCase):
             pyproject = tomllib.load(handle)
 
         self.assertEqual(pyproject['tool']['hatch']['version']['path'],
-                         'src/sourcerer/Version.py')
+                         'src/immvoke/Version.py')
         self.assertIn('version', pyproject['project']['dynamic'])
 
 

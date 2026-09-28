@@ -8,13 +8,13 @@ later, once a second source exists to justify it.
 # Info
 __author__ = 'Susanna Marquez'
 
-# Sourcerer imports
-from sourcerer.Sources.AirrcImgt import AirrcImgtSource
-from sourcerer.Sources.Imgt import ImgtSource
-from sourcerer.Sources.Oas import OasSource
-from sourcerer.Sources.Ogrdb import OgrdbSource
+# Immvoke imports
+from immvoke.Sources.AirrcImgt import AirrcImgtSource
+from immvoke.Sources.Imgt import ImgtSource
+from immvoke.Sources.Oas import OasSource
+from immvoke.Sources.Ogrdb import OgrdbSource
 
-#: Every source sourcerer knows about, by canonical commandline name.
+#: Every source immvoke knows about, by canonical commandline name.
 REGISTRY = {source.name: source
             for source in (OasSource, ImgtSource, OgrdbSource, AirrcImgtSource)}
 

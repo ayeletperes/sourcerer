@@ -13,9 +13,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-# Sourcerer imports
-from sourcerer.Exceptions import HttpError, ProbeIncompleteError
-from sourcerer.Http import HttpClient, Validators, hashFile, parseContentRangeTotal
+# Immvoke imports
+from immvoke.Exceptions import HttpError, ProbeIncompleteError
+from immvoke.Http import HttpClient, Validators, hashFile, parseContentRangeTotal
 from tests.FakeHttp import Boom, FakeResponse, FakeSession, rangeHandler, sequenceHandler
 
 URL = 'https://example.org/unit.csv.gz'
@@ -57,7 +57,7 @@ class TestRetry(unittest.TestCase):
     """
 
     def setUp(self):
-        patcher = mock.patch('sourcerer.Http.time.sleep')
+        patcher = mock.patch('immvoke.Http.time.sleep')
         self.sleep = patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -112,7 +112,7 @@ class TestFetch(unittest.TestCase):
         self.dest = Path(self.tmp.name) / 'unit.csv.gz'
         self.digest = hashlib.sha256(BODY).hexdigest()
 
-        patcher = mock.patch('sourcerer.Http.time.sleep')
+        patcher = mock.patch('immvoke.Http.time.sleep')
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -216,7 +216,7 @@ class TestProbes(unittest.TestCase):
     """
 
     def setUp(self):
-        patcher = mock.patch('sourcerer.Http.time.sleep')
+        patcher = mock.patch('immvoke.Http.time.sleep')
         patcher.start()
         self.addCleanup(patcher.stop)
 

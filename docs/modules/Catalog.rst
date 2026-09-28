@@ -1,7 +1,7 @@
-sourcerer.Catalog
+immvoke.Catalog
 -----------------
 
-.. automodule:: sourcerer.Catalog
+.. automodule:: immvoke.Catalog
     :members:
     :undoc-members:
     :show-inheritance:

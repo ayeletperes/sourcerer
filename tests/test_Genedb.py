@@ -8,9 +8,9 @@ __author__ = 'Ayelet Peres'
 # Imports
 import unittest
 
-# Sourcerer imports
-from sourcerer import Genedb
-from sourcerer.Reference import KIND_AA, KIND_CONSTANT, KIND_VDJ
+# Immvoke imports
+from immvoke import Genedb
+from immvoke.Reference import KIND_AA, KIND_CONSTANT, KIND_VDJ
 
 
 class FakeResponse:

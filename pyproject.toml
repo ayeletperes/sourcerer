@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "sourcerer"
+name = "immvoke"
 dynamic = ["version"]
 description = "Download data from online immune repertoire databases and format it for Immcantation"
 readme = "README.rst"
@@ -40,19 +40,19 @@ dependencies = [
 dev = ["ruff>=0.5"]
 
 [project.scripts]
-sourcerer = "sourcerer.Cli:main"
+immvoke = "immvoke.Cli:main"
 
 [project.urls]
 Homepage = "https://immcantation.readthedocs.io"
 
 [tool.hatch.version]
-path = "src/sourcerer/Version.py"
+path = "src/immvoke/Version.py"
 
 [tool.hatch.build.targets.wheel]
-# The schema snapshots under src/sourcerer/data are package data and ship
+# The schema snapshots under src/immvoke/data are package data and ship
 # automatically as part of the package. Do not add a force-include for them: it
 # duplicates every file and the build fails.
-packages = ["src/sourcerer"]
+packages = ["src/immvoke"]
 
 [tool.ruff]
 line-length = 90
@@ -71,4 +71,4 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["sourcerer"]
+known-first-party = ["immvoke"]

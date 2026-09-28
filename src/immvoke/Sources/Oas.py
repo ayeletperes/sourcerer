@@ -32,11 +32,11 @@ from urllib.parse import urlparse
 import pandas
 from bs4 import BeautifulSoup
 
-# Sourcerer imports
-from sourcerer.Catalog import DETAIL_OK, filterCatalog, loadCatalog, needsDetail
-from sourcerer.Convert import coerceAirrTypes
-from sourcerer.Exceptions import OasParseError
-from sourcerer.Sources.Base import DataUnit, SourceBase
+# Immvoke imports
+from immvoke.Catalog import DETAIL_OK, filterCatalog, loadCatalog, needsDetail
+from immvoke.Convert import coerceAirrTypes
+from immvoke.Exceptions import OasParseError
+from immvoke.Sources.Base import DataUnit, SourceBase
 
 log = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ def parseDownloadUrls(html):
     if match is None:
         raise OasParseError(
             'no "%s" array in the OAS search reply; the download script is no '
-            'longer embedded the way sourcerer expects' % CSV_ARRAY_MARKER)
+            'longer embedded the way immvoke expects' % CSV_ARRAY_MARKER)
 
     urls = re.findall(WGET_REGEX, match.group(1))
     if not urls:
@@ -435,11 +435,11 @@ LOCUS_LETTERS = {'H': 'IGH', 'K': 'IGK', 'L': 'IGL'}
 TRUE_TOKENS = frozenset(['T', 'TRUE', 'TRUE.', '1', 'YES', 'Y'])
 FALSE_TOKENS = frozenset(['F', 'FALSE', 'FALSE.', '0', 'NO', 'N'])
 
-#: Fields sourcerer adds. The prefix guarantees they cannot collide with a
+#: Fields immvoke adds. The prefix guarantees they cannot collide with a
 #: current or future AIRR field name.
-PROVENANCE_FIELDS = ('sourcerer_source', 'sourcerer_collection',
-                     'sourcerer_unit_id', 'sourcerer_original_sequence_id',
-                     'sourcerer_row_hash')
+PROVENANCE_FIELDS = ('immvoke_source', 'immvoke_collection',
+                     'immvoke_unit_id', 'immvoke_original_sequence_id',
+                     'immvoke_row_hash')
 
 
 def unitStem(unit_id):
@@ -887,16 +887,16 @@ def _finishChunk(frame, metadata, unit_id, collection, report):
     report['loci'].update(x for x in frame['locus'].unique() if x)
 
     frame['repertoire_id'] = unit_id
-    frame['sourcerer_source'] = 'oas'
-    frame['sourcerer_collection'] = collection
-    frame['sourcerer_unit_id'] = unit_id
+    frame['immvoke_source'] = 'oas'
+    frame['immvoke_collection'] = collection
+    frame['immvoke_unit_id'] = unit_id
     # Recorded only when sequence_id is not already the source's own value.
     # Repeating an identical value in a second column of every row is noise, not
     # provenance; a value here means the identifier was rewritten.
     source_ids = frame['_source_sequence_id'].astype(str)
-    frame['sourcerer_original_sequence_id'] = source_ids.where(
+    frame['immvoke_original_sequence_id'] = source_ids.where(
         source_ids != frame['sequence_id'].astype(str), '')
-    frame['sourcerer_row_hash'] = frame.apply(rowHash, axis=1)
+    frame['immvoke_row_hash'] = frame.apply(rowHash, axis=1)
 
     drop = [x for x in frame.columns
             if x in CONSUMED_COLUMNS or x.startswith('_')]
@@ -967,8 +967,8 @@ class OasSource(SourceBase):
         """
         from datetime import datetime
 
-        from sourcerer.Schema import Collection, Field, SourceSchema
-        from sourcerer.Version import __version__
+        from immvoke.Schema import Collection, Field, SourceSchema
+        from immvoke.Version import __version__
 
         collections = {}
         for collection in self.collections:
@@ -982,7 +982,7 @@ class OasSource(SourceBase):
         return SourceSchema(
             source=self.name,
             harvested=datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            harvested_by='sourcerer %s' % __version__,
+            harvested_by='immvoke %s' % __version__,
             source_urls={'paired_form': PAIRED_FORM_URL,
                          'unpaired_form': UNPAIRED_FORM_URL,
                          'catalog': CATALOG_URL,
@@ -1147,7 +1147,7 @@ class OasSource(SourceBase):
         """
         from importlib import resources
 
-        anchor = resources.files('sourcerer').joinpath(
+        anchor = resources.files('immvoke').joinpath(
             'data/schemas', self.name, '%s_catalog.tsv' % collection)
 
         return Path(str(anchor))
@@ -1165,7 +1165,7 @@ class OasSource(SourceBase):
         rows = loadCatalog(self.catalogPath(query.collection))
         if not rows:
             raise OasParseError(
-                "no packaged catalog for OAS %s; run 'sourcerer schema refresh "
+                "no packaged catalog for OAS %s; run 'immvoke schema refresh "
                 "--source oas'" % query.collection)
 
         selected = filterCatalog(rows, query.filters)

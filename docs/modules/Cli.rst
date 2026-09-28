@@ -1,7 +1,7 @@
-sourcerer.Cli
+immvoke.Cli
 -------------
 
-.. automodule:: sourcerer.Cli
+.. automodule:: immvoke.Cli
     :members:
     :undoc-members:
     :show-inheritance:

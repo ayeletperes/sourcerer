@@ -1,7 +1,7 @@
-sourcerer.Provenance
+immvoke.Provenance
 --------------------
 
-.. automodule:: sourcerer.Provenance
+.. automodule:: immvoke.Provenance
     :members:
     :undoc-members:
     :show-inheritance:

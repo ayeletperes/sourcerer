@@ -1,7 +1,7 @@
-sourcerer.Sources.AirrcImgt
+immvoke.Sources.AirrcImgt
 ---------------------------
 
-.. automodule:: sourcerer.Sources.AirrcImgt
+.. automodule:: immvoke.Sources.AirrcImgt
     :members:
     :undoc-members:
     :show-inheritance:

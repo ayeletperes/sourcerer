@@ -11,10 +11,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Sourcerer imports
-from sourcerer.Reference import KIND_CONSTANT, KIND_VDJ
-from sourcerer.Sources.Base import DataUnit, Query
-from sourcerer.Sources.Ogrdb import (
+# Immvoke imports
+from immvoke.Reference import KIND_CONSTANT, KIND_VDJ
+from immvoke.Sources.Base import DataUnit, Query
+from immvoke.Sources.Ogrdb import (
     OgrdbSource,
     bucketChain,
     normalizeVersion,
@@ -221,7 +221,7 @@ class TestPinningAndMetadata(unittest.TestCase):
         source = OgrdbSource(client=StubClient())
         source.pinSets([{'set': 'IGH_VDJ', 'version': '1',
                          'release_date': '2020-01-01'}])
-        with self.assertLogs('sourcerer.Sources.Ogrdb', level='WARNING') as logged:
+        with self.assertLogs('immvoke.Sources.Ogrdb', level='WARNING') as logged:
             units = source.searchUnits(Query(collection='human',
                                              filters={'locus': 'IGH'}))
         self.assertTrue(any('IGHC' in line for line in logged.output))
@@ -238,9 +238,9 @@ class TestPinningAndMetadata(unittest.TestCase):
 
     def test_pin_release_is_rejected_for_ogrdb(self):
         """OGRDB cannot pin an IMGT release; asking is a clear error."""
-        from sourcerer.Exceptions import SourcererError
+        from immvoke.Exceptions import ImmvokeError
 
-        with self.assertRaises(SourcererError):
+        with self.assertRaises(ImmvokeError):
             OgrdbSource(client=None).pinRelease('202631-7')
 
 
@@ -292,7 +292,7 @@ class TestAlias(unittest.TestCase):
 
     def test_airrc_resolves_to_ogrdb(self):
         """'airrc' is an alias that resolves to the ogrdb source."""
-        from sourcerer.Sources import canonicalName, getSource
+        from immvoke.Sources import canonicalName, getSource
 
         self.assertEqual(canonicalName('airrc'), 'ogrdb')
         self.assertIsInstance(getSource('airrc', client=None), OgrdbSource)

@@ -1,6 +1,6 @@
 .. _UsageOgrdb:
 
-sourcerer ogrdb
+immvoke ogrdb
 ================================================================================
 
 `OGRDB <https://ogrdb.airr-community.org/>`__: AIRR Community curated
@@ -10,16 +10,16 @@ narrowed with the ``--locus`` filter below. ``download`` writes an airrflow
 which needs ``makeblastdb`` on the path.
 
 OGRDB is the AIRR Community database, so ``ogrdb`` also answers to the alias
-``airrc`` (``sourcerer airrc download ...``). For a reference that additionally
+``airrc`` (``immvoke airrc download ...``). For a reference that additionally
 fills in the T-cell receptor and the remaining constants from IMGT, use the
 ``airrc-imgt`` source instead.
 
 Downloading ``all`` instead of a single species fetches every species
-**sourcerer supports** into one ``reference_base``, described by one
+**immvoke supports** into one ``reference_base``, described by one
 ``IMGT.yaml`` and one ``AIRRC.yaml``. That is not every species the source
-publishes: sourcerer covers human and mouse, while OGRDB also carries rhesus
+publishes: immvoke covers human and mouse, while OGRDB also carries rhesus
 macaque, deer mouse and rainbow trout, and IMGT many more.
 
-.. autoprogram:: sourcerer.Cli:getArgParser()
-   :prog: sourcerer
+.. autoprogram:: immvoke.Cli:getArgParser()
+   :prog: immvoke
    :start_command: ogrdb

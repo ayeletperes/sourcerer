@@ -1,7 +1,7 @@
-sourcerer.Sources.Oas
+immvoke.Sources.Oas
 ---------------------
 
-.. automodule:: sourcerer.Sources.Oas
+.. automodule:: immvoke.Sources.Oas
     :members:
     :undoc-members:
     :show-inheritance:

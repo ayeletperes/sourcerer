@@ -1,4 +1,4 @@
-.. sourcerer documentation master file
+.. immvoke documentation master file
 
 .. include:: ../README.rst
 

@@ -1,11 +1,11 @@
 .. _UsageSources:
 
-sourcerer sources
+immvoke sources
 ================================================================================
 
-Lists every data source ``sourcerer`` knows how to fetch from, with a
+Lists every data source ``immvoke`` knows how to fetch from, with a
 one-line description, homepage, and license for each.
 
-.. autoprogram:: sourcerer.Cli:getArgParser()
-   :prog: sourcerer
+.. autoprogram:: immvoke.Cli:getArgParser()
+   :prog: immvoke
    :start_command: sources

@@ -1,7 +1,7 @@
-sourcerer.Genedb
+immvoke.Genedb
 ----------------
 
-.. automodule:: sourcerer.Genedb
+.. automodule:: immvoke.Genedb
     :members:
     :undoc-members:
     :show-inheritance:

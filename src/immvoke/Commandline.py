@@ -15,7 +15,7 @@ class CommonHelpFormatter(RawDescriptionHelpFormatter, ArgumentDefaultsHelpForma
     """
     Custom argparse.HelpFormatter preserving epilog layout and showing defaults.
 
-    Matches the formatter used across Change-O and pRESTO so that ``sourcerer``
+    Matches the formatter used across Change-O and pRESTO so that ``immvoke``
     help output reads like the rest of Immcantation.
     """
     pass
@@ -46,4 +46,4 @@ def setupLogging(verbose=False, quiet=False):
     logging.basicConfig(stream=sys.stderr, level=level,
                         format='%(levelname)s %(message)s')
 
-    return logging.getLogger('sourcerer')
+    return logging.getLogger('immvoke')

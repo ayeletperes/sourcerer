@@ -33,9 +33,11 @@ log = logging.getLogger(__name__)
 
 #: The IMGT immunoglobulin constants to take per species: the ones OGRDB has no
 #: set for. Human IGHC comes from OGRDB, so only the light constants are taken;
-#: mouse has no constant set at all, so all three heavy and light come from IMGT.
+#: mouse and rhesus have no constant set at all, so all three heavy and light
+#: come from IMGT.
 IMGT_IG_CONSTANTS = {'human': ('IGKC', 'IGLC'),
-                     'mouse': ('IGHC', 'IGKC', 'IGLC')}
+                     'mouse': ('IGHC', 'IGKC', 'IGLC'),
+                     'rhesus': ('IGHC', 'IGKC', 'IGLC')}
 
 #: Which download a unit came from, recorded so buildReference can hand each unit
 #: back to the source that knows how to read it.
@@ -51,9 +53,10 @@ class AirrcImgtSource(ReferenceSource):
     description = ('AIRR-C immunoglobulin sets blended with IMGT for TR and the '
                    'remaining constants')
     homepage = 'https://ogrdb.airr-community.org/'
-    collections = ('human', 'mouse')
+    collections = ('human', 'mouse', 'rhesus')
     collection_help = {'human': 'Homo sapiens blended reference',
-                       'mouse': 'Mus musculus blended reference'}
+                       'mouse': 'Mus musculus blended reference',
+                       'rhesus': 'Macaca mulatta blended reference'}
     license = ('OGRDB data under CC BY 4.0 and IMGT data under the IMGT terms of '
                'use; cite both OGRDB and IMGT')
     citation = OgrdbSource.citation + ImgtSource.citation

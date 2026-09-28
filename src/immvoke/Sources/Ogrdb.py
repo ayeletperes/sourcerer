@@ -54,7 +54,8 @@ SITE = 'https://ogrdb.airr-community.org/germline_sets'
 DOI_PREFIX = 'https://doi.org/'
 
 #: Species as OGRDB labels them.
-SPECIES_LABEL = {'human': 'Homo sapiens', 'mouse': 'Mus musculus'}
+SPECIES_LABEL = {'human': 'Homo sapiens', 'mouse': 'Mus musculus',
+                 'rhesus': 'Macaca mulatta'}
 
 #: The germline sets to fetch per species and locus, and the chains each covers.
 #: A locus can need more than one set: mouse splits V and J across strain-specific
@@ -68,6 +69,11 @@ SETS = {
                        ('IGKJ (all strains)', ('IGKJ',))),
     ('mouse', 'IGL'): (('C57BL/6J IGLV', ('IGLV',)),
                        ('IGLJ (all strains)', ('IGLJ',))),
+    # Rhesus is curated as one V/D/J set per locus; OGRDB has no constant set for
+    # it, so its reference carries no constants (IMGT does, if those are needed).
+    ('rhesus', 'IGH'): (('IGH_VDJ', ('IGHV', 'IGHD', 'IGHJ')),),
+    ('rhesus', 'IGK'): (('IGK_VJ', ('IGKV', 'IGKJ')),),
+    ('rhesus', 'IGL'): (('IGL_VJ', ('IGLV', 'IGLJ')),),
 }
 
 #: Loci OGRDB covers, offered as a filter flag.
@@ -195,9 +201,10 @@ class OgrdbSource(ReferenceSource):
     prefix = 'airrc'
     description = 'OGRDB: AIRR Community curated immunoglobulin germline sets'
     homepage = 'https://ogrdb.airr-community.org/'
-    collections = ('human', 'mouse')
+    collections = ('human', 'mouse', 'rhesus')
     collection_help = {'human': 'Homo sapiens curated IG sets',
-                       'mouse': 'Mus musculus curated IG sets'}
+                       'mouse': 'Mus musculus curated IG sets',
+                       'rhesus': 'Macaca mulatta curated IG sets'}
 
     license = 'CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)'
     citation = (

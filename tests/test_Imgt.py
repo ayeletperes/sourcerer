@@ -112,6 +112,19 @@ class TestSearchUnits(unittest.TestCase):
         self.assertEqual(len(units), 1)
         self.assertIn('query=7.5+IGKC', units[0].url)
 
+    def test_rhesus_is_offered_and_uses_the_standard_constant_query(self):
+        """Macaca mulatta is a collection; its light constants use 14.1, not the
+        mouse-only 7.5, and the query names the species."""
+        source = ImgtSource(client=None)
+        self.assertIn('rhesus', source.collections)
+        units = source.searchUnits(
+            Query(collection='rhesus',
+                  filters={'locus': 'IGK', 'segment': 'C'}))
+        self.assertEqual(len(units), 1)
+        self.assertIn('query=14.1+IGKC', units[0].url)
+        self.assertIn('species=Macaca%20mulatta', units[0].url)
+        self.assertEqual(units[0].metadata['species'], 'rhesus')
+
 
 class TestBuildReference(unittest.TestCase):
     """
